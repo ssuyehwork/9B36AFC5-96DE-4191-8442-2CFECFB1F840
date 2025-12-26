@@ -5,10 +5,11 @@ import ctypes
 from ctypes import wintypes
 import time
 import datetime
+import subprocess  # <--- 新增导入，用于启动外部进程
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit, 
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem, 
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel)
-from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings
+from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
 from PyQt5.QtGui import QImage, QColor, QCursor
 
 # =================================================================================
@@ -60,10 +61,14 @@ def log(message):
 # =================================================================================
 try:
     from data.database import DBManager
+    from services.clipboard import ClipboardManager
 except ImportError:
     class DBManager:
         def get_items(self, **kwargs): return []
         def get_partitions_tree(self): return []
+    class ClipboardManager:
+        def __init__(self, db_manager): pass
+        def process_clipboard(self, mime_data): pass
 
 # =================================================================================
 #   样式表
@@ -111,26 +116,22 @@ QLineEdit {
     font-size: 16px;
 }
 
-/* 通用工具栏按钮 (包含侧边栏按钮) */
-QPushButton#ToolButton { 
+/* 通用工具栏按钮 */
+QPushButton#ToolButton, QPushButton#MinButton, QPushButton#CloseButton, QPushButton#PinButton, QPushButton#MaxButton { 
     background-color: transparent; 
     border-radius: 4px; 
-    padding: 4px;
-    font-size: 16px; /* 稍微调大字体以显示Emoji */
+    padding: 0px;  
+    font-size: 16px;
+    font-weight: bold;
+    text-align: center;
 }
-QPushButton#ToolButton:hover { background-color: #444; }
-QPushButton#ToolButton:checked { background-color: #555; border: 1px solid #666; }
 
-QPushButton#CloseButton { background-color: transparent; border-radius: 4px; }
+QPushButton#ToolButton:hover, QPushButton#MinButton:hover, QPushButton#MaxButton:hover { background-color: #444; }
+QPushButton#ToolButton:checked, QPushButton#MaxButton:checked { background-color: #555; border: 1px solid #666; }
+
 QPushButton#CloseButton:hover { background-color: #E81123; color: white; }
 
-/* 置顶按钮 */
-QPushButton#PinButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    font-size: 16px;
-}
+/* 置顶按钮特殊状态 */
 QPushButton#PinButton:hover { background-color: #444; }
 QPushButton#PinButton:checked { background-color: #0078D4; color: white; border: 1px solid #005A9E; }
 """
@@ -152,6 +153,13 @@ class MainWindow(QWidget):
         self.last_focus_hwnd = None
         self.last_thread_id = None
         self.my_hwnd = None
+        
+        # --- Clipboard Manager ---
+        self.cm = ClipboardManager(self.db)
+        self.clipboard = QApplication.clipboard()
+        self.clipboard.dataChanged.connect(self.on_clipboard_changed)
+        self.cm.data_captured.connect(self._update_list)
+        self._processing_clipboard = False
         
         self._init_ui()
         self._restore_window_state()
@@ -175,8 +183,11 @@ class MainWindow(QWidget):
         self.search_box.textChanged.connect(lambda text: self.clear_action.setVisible(bool(text)))
         self.clear_action.setVisible(False)
         
+        # 按钮信号连接
         self.btn_stay_top.clicked.connect(self._toggle_stay_on_top)
         self.btn_toggle_side.clicked.connect(self._toggle_partition_panel)
+        self.btn_open_full.clicked.connect(self._launch_main_app) # 连接启动功能
+        self.btn_minimize.clicked.connect(self.showMinimized) 
         self.btn_close.clicked.connect(self.close)
         
         self._update_partition_tree()
@@ -218,26 +229,47 @@ class MainWindow(QWidget):
         
         title_bar_layout.addStretch()
         
-        # [修改] 侧边栏开关：图标改为 "👁️"
-        self.btn_toggle_side = QPushButton("👁️", self)
-        self.btn_toggle_side.setObjectName("ToolButton")
-        self.btn_toggle_side.setToolTip("显示/隐藏侧边栏")
-        self.btn_toggle_side.setFixedSize(32, 32)
+        # --- 按钮创建区 ---
         
+        # 1. 保持置顶 (Pin)
         self.btn_stay_top = QPushButton("📌", self)
         self.btn_stay_top.setObjectName("PinButton")
         self.btn_stay_top.setToolTip("保持置顶")
         self.btn_stay_top.setCheckable(True)
         self.btn_stay_top.setFixedSize(32, 32)
+
+        # 2. 侧边栏开关 (Eye)
+        self.btn_toggle_side = QPushButton("👁️", self)
+        self.btn_toggle_side.setObjectName("ToolButton")
+        self.btn_toggle_side.setToolTip("显示/隐藏侧边栏")
+        self.btn_toggle_side.setFixedSize(32, 32)
         
+        # 3. 启动完整界面 (Open Main) - [新增]
+        self.btn_open_full = QPushButton(self)
+        self.btn_open_full.setObjectName("MaxButton")
+        self.btn_open_full.setToolTip("打开主程序界面")
+        # 使用最大化图标表示"完整界面"
+        self.btn_open_full.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
+        self.btn_open_full.setFixedSize(32, 32)
+
+        # 4. 最小化 (Minimize)
+        self.btn_minimize = QPushButton("—", self)
+        self.btn_minimize.setObjectName("MinButton")
+        self.btn_minimize.setToolTip("最小化")
+        self.btn_minimize.setFixedSize(32, 32)
+        
+        # 5. 关闭 (Close)
         self.btn_close = QPushButton(self)
         self.btn_close.setObjectName("CloseButton")
         self.btn_close.setToolTip("关闭")
         self.btn_close.setIcon(self.style().standardIcon(QStyle.SP_TitleBarCloseButton))
         self.btn_close.setFixedSize(32, 32)
         
-        title_bar_layout.addWidget(self.btn_toggle_side)
+        # 添加到布局
         title_bar_layout.addWidget(self.btn_stay_top)
+        title_bar_layout.addWidget(self.btn_toggle_side)
+        title_bar_layout.addWidget(self.btn_open_full) # 新增
+        title_bar_layout.addWidget(self.btn_minimize)
         title_bar_layout.addWidget(self.btn_close)
         
         self.main_layout.addLayout(title_bar_layout)
@@ -279,6 +311,28 @@ class MainWindow(QWidget):
         
         content_layout.addWidget(self.splitter)
         self.main_layout.addWidget(content_widget)
+
+    # --- Launch Main App Logic ---
+    def _launch_main_app(self):
+        """启动 ClipboardPro_2.py"""
+        try:
+            # 获取当前脚本所在目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            script_path = os.path.join(current_dir, "ClipboardPro_2.py")
+            
+            if os.path.exists(script_path):
+                log(f"🚀 正在启动: {script_path}")
+                # 使用 subprocess.Popen 启动新进程，不阻塞当前界面
+                subprocess.Popen([sys.executable, script_path])
+            else:
+                log(f"❌ 找不到文件: {script_path}")
+                # 尝试启动 main_window.py 作为备选
+                alt_path = os.path.join(current_dir, "main_window.py")
+                if os.path.exists(alt_path):
+                    log(f"⚠️ 尝试启动 main_window.py: {alt_path}")
+                    subprocess.Popen([sys.executable, alt_path])
+        except Exception as e:
+            log(f"❌ 启动失败: {e}")
 
     # --- Restore & Save State ---
     def _restore_window_state(self):
@@ -395,12 +449,17 @@ class MainWindow(QWidget):
     def _update_list(self):
         search_text = self.search_box.text()
         partition_filter = None
+        date_modify_filter = None # 新增变量
         current_partition = self.partition_tree.currentItem()
         if current_partition:
             partition_data = current_partition.data(0, Qt.UserRole)
-            if partition_data and partition_data['type'] != 'all':
-                partition_filter = partition_data
-        items = self.db.get_items(search=search_text, partition_filter=partition_filter, limit=100)
+            if partition_data:
+                if partition_data['type'] == 'today':
+                    date_modify_filter = '今日'
+                    # partition_filter 保持为 None
+                elif partition_data['type'] != 'all':
+                    partition_filter = partition_data
+        items = self.db.get_items(search=search_text, partition_filter=partition_filter, date_modify_filter=date_modify_filter, limit=None)
         self.list_widget.clear()
         self._add_debug_test_item()
         for item in items:
@@ -422,20 +481,65 @@ class MainWindow(QWidget):
         else:
             return getattr(item, 'content', '').replace('\n', ' ').replace('\r', '').strip()[:150]
 
-    def _update_partition_tree(self):
-        self.partition_tree.clear()
-        all_items_node = QTreeWidgetItem(self.partition_tree, ["全部"])
-        all_items_node.setData(0, Qt.UserRole, {'type': 'all', 'id': -1})
-        top_level_partitions = self.db.get_partitions_tree()
-        self._add_partition_recursive(top_level_partitions, self.partition_tree)
-        self.partition_tree.expandAll()
-        self.partition_tree.setCurrentItem(all_items_node)
+    def _create_color_icon(self, color_str):
+        from PyQt5.QtGui import QPixmap, QPainter, QIcon
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(color_str or "#808080"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(2, 2, 12, 12, 4, 4)
+        painter.end()
+        return QIcon(pixmap)
 
-    def _add_partition_recursive(self, partitions, parent_item):
+    def _update_partition_tree(self):
+        current_selection = self.partition_tree.currentItem().data(0, Qt.UserRole) if self.partition_tree.currentItem() else None
+        self.partition_tree.clear()
+        
+        counts = self.db.get_partition_item_counts()
+        partition_counts = counts.get('partitions', {})
+
+        # -- 添加静态项 --
+        static_items = [
+            ("全部数据", {'type': 'all', 'id': -1}, QStyle.SP_DirHomeIcon, counts.get('total', 0)),
+            ("今日数据", {'type': 'today', 'id': -5}, QStyle.SP_FileDialogDetailedView, counts.get('today_modified', 0)),
+        ]
+        
+        for name, data, icon, count in static_items:
+            item = QTreeWidgetItem(self.partition_tree, [f"{name} ({count})"])
+            item.setData(0, Qt.UserRole, data)
+            item.setIcon(0, self.style().standardIcon(icon))
+        
+        # -- 递归添加用户分区 --
+        top_level_partitions = self.db.get_partitions_tree()
+        self._add_partition_recursive(top_level_partitions, self.partition_tree, partition_counts)
+
+        self.partition_tree.expandAll()
+        
+        # 恢复之前的选择
+        if current_selection:
+            it = QTreeWidgetItemIterator(self.partition_tree)
+            while it.value():
+                item = it.value()
+                item_data = item.data(0, Qt.UserRole)
+                if item_data and item_data.get('id') == current_selection.get('id') and item_data.get('type') == current_selection.get('type'):
+                    self.partition_tree.setCurrentItem(item)
+                    break
+                it += 1
+        else:
+            if self.partition_tree.topLevelItemCount() > 0:
+                self.partition_tree.setCurrentItem(self.partition_tree.topLevelItem(0))
+
+    def _add_partition_recursive(self, partitions, parent_item, partition_counts):
         for partition in partitions:
-            item = QTreeWidgetItem(parent_item, [partition.name])
-            item.setData(0, Qt.UserRole, {'type': 'partition', 'id': partition.id})
-            if partition.children: self._add_partition_recursive(partition.children, item)
+            count = partition_counts.get(partition.id, 0)
+            item = QTreeWidgetItem(parent_item, [f"{partition.name} ({count})"])
+            item.setData(0, Qt.UserRole, {'type': 'partition', 'id': partition.id, 'color': partition.color})
+            item.setIcon(0, self._create_color_icon(partition.color))
+            
+            if partition.children:
+                self._add_partition_recursive(partition.children, item, partition_counts)
 
     def _on_partition_selection_changed(self, c, p): self._update_list()
     def _toggle_partition_panel(self): self.partition_tree.setVisible(not self.partition_tree.isVisible())
@@ -453,12 +557,24 @@ class MainWindow(QWidget):
         if not db_item: return
         try:
             clipboard = QApplication.clipboard()
+            
+            # 1. 处理图片
             if getattr(db_item, 'item_type', '') == 'image' and getattr(db_item, 'data_blob', None):
                 image = QImage()
                 image.loadFromData(db_item.data_blob)
                 clipboard.setImage(image)
+            
+            # 2. 处理文件：构建 URI 列表
+            elif getattr(db_item, 'item_type', '') == 'file' and getattr(db_item, 'file_path', ''):
+                mime_data = QMimeData()
+                urls = [QUrl.fromLocalFile(p) for p in db_item.file_path.split(';') if p]
+                mime_data.setUrls(urls)
+                clipboard.setMimeData(mime_data)
+                
+            # 3. 处理普通文本/链接
             else:
                 clipboard.setText(db_item.content)
+            
             self._paste_ditto_style()
         except Exception as e: log(f"❌ 操作失败: {e}")
 
@@ -484,6 +600,17 @@ class MainWindow(QWidget):
         finally:
             if attached: user32.AttachThreadInput(curr_thread, target_thread, False)
 
+    def on_clipboard_changed(self):
+        if self._processing_clipboard:
+            return
+        self._processing_clipboard = True
+        try:
+            mime = self.clipboard.mimeData()
+            # quick.py 默认不与特定分区关联，所以传入 None
+            self.cm.process_clipboard(mime, None)
+        finally:
+            self._processing_clipboard = False
+
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Escape: self.close()
@@ -502,10 +629,52 @@ class MainWindow(QWidget):
                 self.list_widget.addItem(item)
 
 if __name__ == '__main__':
-    log("🚀 程序启动 (Eye Icon Update)")
+    log("🚀 程序启动 (quick.py 作为主入口)")
+    
+    # 高 DPI 适应
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     app = QApplication(sys.argv)
-    try: db_manager = DBManager()
-    except: sys.exit(1)
-    window = MainWindow(db_manager=db_manager) 
+    app.setApplicationName("ClipboardProQuickPanel")
+
+    # --- 单实例检测 ---
+    from PyQt5.QtCore import QSharedMemory
+    shared_mem = QSharedMemory("ClipboardPro_QuickPanel_Instance")
+    
+    # 尝试附加到现有内存段
+    if shared_mem.attach():
+        log("⚠️ 检测到已有 QuickPanel 实例在运行，程序将退出。")
+        sys.exit(0) # 正常退出
+    
+    # 创建新的共享内存段
+    if not shared_mem.create(1):
+        log(f"❌ 无法创建共享内存段: {shared_mem.errorString()}")
+        sys.exit(1) # 错误退出
+
+    log("✅ 单例锁创建成功，启动主程序...")
+
+    try: 
+        db_manager = DBManager()
+    except Exception as e:
+        log(f"❌ 数据库连接失败: {e}")
+        sys.exit(1)
+        
+    window = MainWindow(db_manager=db_manager)
     window.show()
+    
+    # 窗口居中
+    try:
+        screen_geo = app.desktop().screenGeometry()
+        panel_geo = window.geometry()
+        window.move(
+            (screen_geo.width() - panel_geo.width()) // 2, 
+            (screen_geo.height() - panel_geo.height()) // 2
+        )
+        window.search_box.setFocus()
+    except Exception as e:
+        log(f"⚠️ 窗口居中失败: {e}")
+
     sys.exit(app.exec_())

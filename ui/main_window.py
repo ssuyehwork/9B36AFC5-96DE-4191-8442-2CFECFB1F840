@@ -759,6 +759,11 @@ class MainWindow(QMainWindow):
             search = self.title_bar.get_search_text()
             partition_filter = self.partition_panel.get_current_selection()
             
+            # 新增逻辑：如果选择“今日数据”，则覆盖日期筛选器并清除分区筛选
+            if partition_filter and partition_filter.get('type') == 'today':
+                date_modify_filter = '今日'
+                partition_filter = None  # 确保不按分区筛选
+
             # 彻底恢复多选功能：无论是否在回收站，均允许 ExtendedSelection (Shift/Ctrl+点击)
             self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
             

@@ -217,7 +217,8 @@ class PartitionPanel(QWidget):
 
         # -- 添加静态项 --
         static_items = [
-            ("全部数据", {'type': 'all', 'id': -1}, QStyle.SP_DirHomeIcon, sum(partition_counts.values()) + counts.get('uncategorized', 0)),
+            ("全部数据", {'type': 'all', 'id': -1}, QStyle.SP_DirHomeIcon, counts.get('total', 0)),
+            ("今日数据", {'type': 'today', 'id': -5}, QStyle.SP_FileDialogDetailedView, counts.get('today_modified', 0)),
             ("未分类", {'type': 'uncategorized', 'id': -2}, QStyle.SP_MessageBoxWarning, counts.get('uncategorized', 0)),
             ("未标签", {'type': 'untagged', 'id': -3}, QStyle.SP_DialogHelpButton, counts.get('untagged', 0)),
             ("回收站", {'type': 'trash', 'id': -4}, QStyle.SP_TrashIcon, counts.get('trash', 0)),

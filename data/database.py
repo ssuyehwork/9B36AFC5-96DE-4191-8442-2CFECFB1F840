@@ -216,6 +216,7 @@ class DBManager:
             existing = session.query(ClipboardItem).filter_by(content_hash=text_hash).first()
             if existing:
                 existing.last_visited_at = datetime.now()
+                existing.modified_at = datetime.now()
                 existing.visit_count += 1
                 if partition_id and not existing.partition_id:
                      existing.partition_id = partition_id
@@ -394,7 +395,7 @@ class DBManager:
             
             if start_dt: q = q.filter(ClipboardItem.modified_at >= start_dt)
             if end_dt: q = q.filter(ClipboardItem.modified_at <= end_dt)
-
+            
         if sort_mode == "manual": q = q.order_by(ClipboardItem.is_pinned.desc(), ClipboardItem.sort_index.asc())
         elif sort_mode == "time": q = q.order_by(ClipboardItem.is_pinned.desc(), ClipboardItem.created_at.desc())
         elif sort_mode == "size": q = q.order_by(ClipboardItem.is_pinned.desc(), func.length(ClipboardItem.content).desc())
@@ -846,16 +847,26 @@ class DBManager:
                             total_counts[parent.id] = total_counts.get(parent.id, 0) + direct_count
                             parent = partition_map.get(parent.parent_id)
                 
+                # 新增：统计今日更新的数据
+                now = datetime.now()
+                today_start = datetime.combine(now.date(), time.min)
+                today_modified_count = base_query.filter(ClipboardItem.modified_at >= today_start).count()
+
+                # 5. 计算总数
+                total_count = base_query.count()
+
                 counts = {
+                    'total': total_count, # 新增: 总项目数
                     'partitions': total_counts,
                     'uncategorized': uncategorized_count,
                     'untagged': base_query.filter(~exists().where(item_tags.c.item_id == ClipboardItem.id)).count(),
-                    'trash': session.query(func.count(ClipboardItem.id)).filter(ClipboardItem.is_deleted == True).scalar()
+                    'trash': session.query(func.count(ClipboardItem.id)).filter(ClipboardItem.is_deleted == True).scalar(),
+                    'today_modified': today_modified_count
                 }
                 return counts
             except Exception as e:
                 log.error(f"获取分区项目计数失败: {e}", exc_info=True)
-                return {'partitions': {}, 'uncategorized': 0, 'untagged': 0, 'trash': 0}
+                return {'partitions': {}, 'uncategorized': 0, 'untagged': 0, 'trash': 0, 'today_modified': 0}
 
     def move_items_to_partition(self, item_ids, partition_id):
         """将多个项目批量移动到指定分区"""
