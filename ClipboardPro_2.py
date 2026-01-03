@@ -31,32 +31,32 @@ class AppController(QObject):
         from data.database import DBManager
         from quick import MainWindow as QuickPanelWindow
         from ui.ball import FloatingBall
+        from ui.tray_manager import TrayManager
 
         self.db_manager = DBManager()
         self.quick_panel = QuickPanelWindow(db_manager=self.db_manager)
-
-        # 将 quick_panel 实例作为 main_window 参数传递给悬浮球
         self.ball = FloatingBall(main_window=self.quick_panel)
+        self.tray = TrayManager()
 
         self._connect_signals()
 
+        # 根据您的要求，同时显示悬浮球和快速面板
         self.ball.show()
-        # 默认不显示快速面板，通过悬浮球的菜单或双击来触发
-        # self.quick_panel.show()
+        self.quick_panel.show()
+        self.tray.show()
 
     def _connect_signals(self):
-        # 悬浮球右键菜单 -> 显示快速面板
-        self.ball.request_show_quick_window.connect(self.show_quick_panel)
-        # 悬浮球双击 -> 同样显示快速面板
-        self.ball.double_clicked.connect(self.show_quick_panel)
-
-        # 悬浮球右键菜单 -> 显示主窗口
+        # 悬浮球信号
+        self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
+        self.ball.double_clicked.connect(self.toggle_quick_panel)
         self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
-
-        # 悬浮球右键菜单 -> 退出
         self.ball.request_quit_app.connect(self.app.quit)
 
-    def show_quick_panel(self):
+        # 托盘图标信号
+        self.tray.request_show_quick_panel.connect(self.toggle_quick_panel)
+        self.tray.request_quit.connect(self.app.quit)
+
+    def toggle_quick_panel(self):
         if self.quick_panel.isVisible():
             self.quick_panel.hide()
         else:
@@ -74,9 +74,11 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("ClipboardManagerPro")
+    # 关键：防止在最后一个窗口关闭时退出程序，除非显式调用 quit()
+    app.setQuitOnLastWindowClosed(False)
     
     from PyQt5.QtCore import QSharedMemory
-    shared_mem = QSharedMemory("ClipboardPro_Main_Instance_Lock")
+    shared_mem = QSharedMemory("ClipboardPro_Main_Instance_Lock_v2")
     
     if shared_mem.attach():
         log.info("⚠️ 应用已在运行中.")
