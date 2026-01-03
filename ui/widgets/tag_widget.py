@@ -28,6 +28,7 @@ class TagWidget(QWidget):
         layout.addWidget(self.close_button)
 
         self.setLayout(layout)
+        self.setObjectName("TagChip") # 设置 objectName 以应用样式
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAutoFillBackground(True) # 确保背景色能显示
 

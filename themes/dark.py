@@ -286,11 +286,9 @@ QTreeWidget::item:selected {
 }
 
 /* 标签胶囊 */
-#ChipsContainer QFrame {
-    background-color: #333333;
-    border-radius: 12px;
-    color: #f0f0f0;
-    border: 1px solid #454545;
+#TagChip {
+    background-color: #3c3c3c;
+    border-radius: 4px;
 }
 #TagCloseButton {
     background: transparent;
