@@ -9,11 +9,17 @@ from PyQt5.QtCore import Qt, QMargins, QPoint, QRect, QSize
 from PyQt5.QtWidgets import QLayout, QSizePolicy
 
 class FlowLayout(QLayout):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, margin=0, spacing=-1):
         super().__init__(parent)
 
         if parent is not None:
-            self.setContentsMargins(QMargins(0, 0, 0, 0))
+            self.setContentsMargins(margin, margin, margin, margin)
+
+        if spacing >= 0:
+            self.setSpacing(spacing)
+        else:
+            # use default spacing
+            pass
 
         self._item_list = []
 
