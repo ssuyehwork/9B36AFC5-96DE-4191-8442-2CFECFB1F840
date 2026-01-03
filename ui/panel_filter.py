@@ -80,7 +80,11 @@ class FilterPanel(QWidget):
             child.setCheckState(0, Qt.Unchecked)
 
     def _on_item_changed(self, item, col):
+        """勾选变化时，发射信号通知主窗口应用前端过滤"""
+        # === 核心修改：只发射信号，不做其他操作 ===
         self.filterChanged.emit()
+        
+        # 保留点击锁定逻辑（防止意外触发）
         self._block_item_click = True
         QTimer.singleShot(100, lambda: setattr(self, '_block_item_click', False))
 

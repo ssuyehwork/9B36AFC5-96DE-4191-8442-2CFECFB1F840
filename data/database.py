@@ -403,33 +403,62 @@ class DBManager:
         elif sort_mode == "visit": q = q.order_by(ClipboardItem.is_pinned.desc(), ClipboardItem.visit_count.desc())
         return q
 
-    def get_items(self, filters=None, search="", sort_mode="manual", selected_tags=None, limit=50, offset=0, date_filter=None, date_modify_filter=None, partition_filter=None):
-        """获取剪贴板项列表"""
+    def get_items(self, filters=None, search="", sort_mode="manual", selected_tags=None, 
+                  limit=50, offset=0, date_filter=None, date_modify_filter=None, partition_filter=None):
+        """
+        获取剪贴板项列表
+        filters, search, selected_tags 用于前端过滤，这里不再使用
+        """
         with self.Session() as session:
             try:
                 include_deleted = (partition_filter and partition_filter.get('type') == 'trash')
-                q = self._build_query(session, filters, search, selected_tags, sort_mode, date_filter, date_modify_filter, partition_filter, include_deleted=include_deleted)
                 
-                # 添加详细日志
+                # === 修改：不传入 filters, search, selected_tags ===
+                q = self._build_query(
+                    session, 
+                    filters=None,  # 前端筛选
+                    search="",     # 前端搜索
+                    selected_tags=None,  # 前端标签
+                    sort_mode=sort_mode, 
+                    date_filter=date_filter, 
+                    date_modify_filter=date_modify_filter, 
+                    partition_filter=partition_filter, 
+                    include_deleted=include_deleted
+                )
+                
                 total_found = q.count()
-                log.info(f"数据库查询：搜索 '{search}' 在数据库中匹配到 {total_found} 条结果。")
+                log.info(f"数据库查询：匹配到 {total_found} 条结果。")
                 
                 results = q.limit(limit).offset(offset).all()
-                log.info(f"数据库查询：应用分页 (limit={limit}, offset={offset}) 后，返回 {len(results)} 条数据给界面。")
+                log.info(f"数据库查询：应用分页后，返回 {len(results)} 条数据。")
                 
                 return results
             except Exception as e:
                 log.error(f"查询失败: {e}", exc_info=True)
                 return []
 
-    def get_count(self, filters=None, search="", selected_tags=None, date_filter=None, date_modify_filter=None, partition_filter=None):
-        """获取符合条件的项目总数"""
+
+    def get_count(self, filters=None, search="", selected_tags=None, date_filter=None, 
+                  date_modify_filter=None, partition_filter=None):
+        """获取符合条件的项目总数（不包含前端筛选）"""
         with self.Session() as session:
             try:
                 include_deleted = (partition_filter and partition_filter.get('type') == 'trash')
-                q = self._build_query(session, filters, search, selected_tags, "manual", date_filter, date_modify_filter, partition_filter, include_deleted=include_deleted)
+                
+                # === 修改：不传入 filters, search, selected_tags ===
+                q = self._build_query(
+                    session, 
+                    filters=None, 
+                    search="", 
+                    selected_tags=None, 
+                    sort_mode="manual", 
+                    date_filter=date_filter, 
+                    date_modify_filter=date_modify_filter, 
+                    partition_filter=partition_filter, 
+                    include_deleted=include_deleted
+                )
                 count = q.count()
-                log.info(f"数据库计数：为更新分页，查询到总数 {count} 条。")
+                log.info(f"数据库计数：总数 {count} 条。")
                 return count
             except Exception as e:
                 log.error(f"计数失败: {e}", exc_info=True)
