@@ -15,6 +15,8 @@
 # Markdown
 !*.md
 
+!*.svg
+
 # 你想禁止的文件（例如 JSON）
 *.json
 *.txt

@@ -1,0 +1,82 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- 背景 -->
+    <circle cx="256" cy="256" r="224" fill="#141414"/>
+    
+    <defs>
+        <!-- 青色光晕 -->
+        <filter id="cyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="8" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+        </filter>
+        <!-- 金色光晕 -->
+        <filter id="goldGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="8" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+        </filter>
+        <!-- 环形渐变 -->
+        <linearGradient id="ringGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#00F3FF" />
+            <stop offset="100%" stop-color="#4a90e2" />
+        </linearGradient>
+        
+        <!-- 【修改处】笔身渐变：深玫瑰红 -->
+        <linearGradient id="penBodyGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#E31C79" />   <!-- 亮玫瑰红 -->
+            <stop offset="60%" stop-color="#880E4F" />   <!-- 深紫红 -->
+            <stop offset="100%" stop-color="#4A0025" />  <!-- 暗红/酒红阴影 -->
+        </linearGradient>
+    </defs>
+
+    <!-- 外部科技圆环 -->
+    <g stroke="url(#ringGrad)" stroke-width="24" stroke-linecap="round" fill="none" filter="url(#cyanGlow)">
+        <path d="M 430 356 A 200 200 0 0 1 256 456"/> 
+        <path d="M 120 370 A 200 200 0 0 1 120 142"/>
+        <path d="M 256 56 A 200 200 0 0 1 356 82"/>
+    </g>
+
+    <!-- 内部装饰细环 -->
+    <g stroke="url(#ringGrad)" stroke-width="16" stroke-linecap="butt" fill="none" opacity="0.8">
+        <path d="M 256 120 A 136 136 0 0 1 372 188" />
+        <path d="M 372 324 A 136 136 0 0 1 256 392" />
+        <path d="M 140 324 A 136 136 0 0 1 140 188" />
+    </g>
+
+    <!-- 装饰点 -->
+    <circle cx="400" cy="120" r="6" fill="#00F3FF" opacity="0.8"/>
+    <circle cx="100" cy="400" r="4" fill="#00F3FF" opacity="0.6"/>
+    <circle cx="120" cy="120" r="5" fill="#00F3FF" opacity="0.7"/>
+
+    <!-- ========= 钢笔主体 ========= -->
+    <g transform="translate(256 256) scale(1.1) translate(-256 -256)">
+        <!-- 1. 笔尖 (金色 - 保持不变) -->
+        <path d="M 185 325 L 235 375 L 155 405 Z" 
+              fill="#FFD700" stroke="#FFAA00" stroke-width="2" stroke-linejoin="round" filter="url(#goldGlow)"/>
+        
+        <!-- 笔尖中间的开缝 -->
+        <line x1="195" y1="365" x2="210" y2="350" stroke="#B8860B" stroke-width="2" />
+
+        <!-- 2. 笔握与笔身 (修改为玫瑰红渐变) -->
+        <!-- 下半部分 -->
+        <path d="M 185 325 L 235 375 L 305 305 L 255 255 Z" 
+              fill="url(#penBodyGrad)" stroke="#600020" stroke-width="1"/>
+        
+        <!-- 3. 金色装饰环 (中圈 - 保持不变) -->
+        <path d="M 255 255 L 305 305 L 315 295 L 265 245 Z" 
+              fill="#FFD700" filter="url(#goldGlow)"/>
+
+        <!-- 4. 笔帽 (修改为玫瑰红渐变) -->
+        <!-- 上半部分 -->
+        <path d="M 265 245 L 315 295 L 385 225 C 395 215 395 200 385 190 L 365 170 C 355 160 340 160 330 170 L 265 245 Z" 
+              fill="url(#penBodyGrad)" stroke="#600020" stroke-width="1"/>
+
+        <!-- 5. 笔夹 (金色 - 保持不变) -->
+        <path d="M 370 180 L 380 190 L 330 240 L 325 235 L 365 195 L 360 190 Z" 
+              fill="#FFD700" stroke="#B8860B" stroke-width="1" filter="url(#goldGlow)"/>
+        <!-- 笔夹顶部的小圆点 -->
+        <circle cx="330" cy="240" r="5" fill="#FFD700" filter="url(#goldGlow)"/>
+
+        <!-- 6. 高光反射 (增加质感) -->
+        <path d="M 270 250 L 310 290" stroke="white" stroke-width="2" opacity="0.3" stroke-linecap="round"/>
+        <path d="M 200 320 L 240 360" stroke="white" stroke-width="2" opacity="0.15" stroke-linecap="round"/>
+    </g>
+</svg>

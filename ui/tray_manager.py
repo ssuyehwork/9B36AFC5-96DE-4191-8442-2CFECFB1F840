@@ -11,8 +11,8 @@ class TrayManager(QSystemTrayIcon):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 使用 Qt 内置的标准图标，确保在所有平台上都可见
-        app_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
+        # 使用 Qt 内置的标准图标，'File' 图标比 'Computer' 更能代表内容管理
+        app_icon = QApplication.style().standardIcon(QStyle.SP_FileIcon)
         self.setIcon(app_icon)
         
         self.setToolTip("Clipboard Pro")
