@@ -991,8 +991,8 @@ class MainWindow(QMainWindow):
 
         log.info(f"✅ 前端过滤完成: 显示 {visible_count}/{self.table.rowCount()} 行")
 
-        # 3. 根据可见项更新筛选器统计
-        stats = self._calculate_stats_from_items(visible_items)
+        # 3. 根据当前页面的所有缓存项更新筛选器统计
+        stats = self._calculate_stats_from_items(self.cached_items)
         self.filter_panel.update_stats(stats)
 
         # 4. 更新状态栏
