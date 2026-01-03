@@ -193,7 +193,10 @@ class MainWindow(QWidget):
         
         self._update_partition_tree()
         self._update_list()
-        self._add_debug_test_item()
+
+        # 如果数据库为空，则添加调试数据
+        if not self.db.get_items(limit=1):
+            self._add_debug_test_item()
 
     def _init_ui(self):
         self.setWindowTitle("Clipboard Pro")
@@ -480,7 +483,6 @@ class MainWindow(QWidget):
             items = all_items
 
         self.list_widget.clear()
-        self._add_debug_test_item()
         for item in items:
             display_text = self._get_content_display(item)
             list_item = QListWidgetItem(display_text)
@@ -640,9 +642,9 @@ class MainWindow(QWidget):
         else: super().keyPressEvent(event)
 
     def _add_debug_test_item(self):
-        if self.list_widget.count() == 0 and not self.db.get_items():
-            for i in range(20):
-                item = QListWidgetItem(f"测试数据 {i+1}")
-                mock_data = type('obj', (object,), {'item_type': 'text', 'content': f'Content {i}'})
-                item.setData(Qt.UserRole, mock_data)
-                self.list_widget.addItem(item)
+        """仅在数据库为空时，用于填充一些示例数据"""
+        for i in range(20):
+            item = QListWidgetItem(f"测试数据 {i+1}")
+            mock_data = type('obj', (object,), {'item_type': 'text', 'content': f'Content {i}'})
+            item.setData(Qt.UserRole, mock_data)
+            self.list_widget.addItem(item)
