@@ -1,14 +1,21 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+# Copyright (C) 2013 Riverbank Computing Limited.
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
+#
+# PyQt5 port of the widgets/layouts/flowlayout example from Qt v6.x
+
+from PyQt5.QtCore import Qt, QMargins, QPoint, QRect, QSize
 from PyQt5.QtWidgets import QLayout, QSizePolicy
-from PyQt5.QtCore import Qt, QPoint, QRect, QSize
 
 class FlowLayout(QLayout):
-    def __init__(self, parent=None, margin=0, spacing=-1):
-        super(FlowLayout, self).__init__(parent)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
         if parent is not None:
-            self.setContentsMargins(margin, margin, margin, margin)
-        self.setSpacing(spacing)
-        self.itemList = []
+            self.setContentsMargins(QMargins(0, 0, 0, 0))
+
+        self._item_list = []
 
     def __del__(self):
         item = self.takeAt(0)
@@ -16,66 +23,78 @@ class FlowLayout(QLayout):
             item = self.takeAt(0)
 
     def addItem(self, item):
-        self.itemList.append(item)
+        self._item_list.append(item)
 
     def count(self):
-        return len(self.itemList)
+        return len(self._item_list)
 
     def itemAt(self, index):
-        if 0 <= index < len(self.itemList):
-            return self.itemList[index]
+        if 0 <= index < len(self._item_list):
+            return self._item_list[index]
+
         return None
 
     def takeAt(self, index):
-        if 0 <= index < len(self.itemList):
-            return self.itemList.pop(index)
+        if 0 <= index < len(self._item_list):
+            return self._item_list.pop(index)
+
         return None
 
     def expandingDirections(self):
-        return Qt.Orientations(Qt.Orientation(0))
+        return Qt.Orientation(0)
 
     def hasHeightForWidth(self):
         return True
 
     def heightForWidth(self, width):
-        height = self.doLayout(QRect(0, 0, width, 0), True)
+        height = self._do_layout(QRect(0, 0, width, 0), True)
         return height
 
     def setGeometry(self, rect):
         super(FlowLayout, self).setGeometry(rect)
-        self.doLayout(rect, False)
+        self._do_layout(rect, False)
 
     def sizeHint(self):
         return self.minimumSize()
 
     def minimumSize(self):
         size = QSize()
-        for item in self.itemList:
+
+        for item in self._item_list:
             size = size.expandedTo(item.minimumSize())
-        margin, _, _, _ = self.getContentsMargins()
-        size += QSize(2 * margin, 2 * margin)
+
+        size += QSize(2 * self.contentsMargins().top(), 2 * self.contentsMargins().top())
         return size
 
-    def doLayout(self, rect, testOnly):
+    def _do_layout(self, rect, test_only):
         x = rect.x()
         y = rect.y()
-        lineHeight = 0
-        spaceX = self.spacing()
-        spaceY = self.spacing()
-        
-        for item in self.itemList:
-            wid = item.widget()
-            nextX = x + item.sizeHint().width() + spaceX
-            if nextX - spaceX > rect.right() and lineHeight > 0:
-                x = rect.x()
-                y = y + lineHeight + spaceY
-                nextX = x + item.sizeHint().width() + spaceX
-                lineHeight = 0
+        line_height = 0
+        spacing = self.spacing()
 
-            if not testOnly:
+        for item in self._item_list:
+            style = item.widget().style()
+            layout_spacing_x = style.layoutSpacing(
+                QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton,
+                Qt.Orientation.Horizontal
+            )
+            layout_spacing_y = style.layoutSpacing(
+                QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton,
+                Qt.Orientation.Vertical
+            )
+            space_x = spacing + layout_spacing_x
+            space_y = spacing + layout_spacing_y
+            next_x = x + item.sizeHint().width() + space_x
+            if next_x - space_x > rect.right() and line_height > 0:
+                x = rect.x()
+                y = y + line_height + space_y
+                next_x = x + item.sizeHint().width() + space_x
+                line_height = 0
+
+            if not test_only:
                 item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
 
-            x = nextX
-            lineHeight = max(lineHeight, item.sizeHint().height())
+            x = next_x
+            line_height = max(line_height, item.sizeHint().height())
 
-        return y + lineHeight - rect.y()
+        return y + line_height - rect.y()
