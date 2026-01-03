@@ -177,9 +177,11 @@ class TagPopup(QWidget):
                 btn.setChecked(is_sel)
                 
                 if is_sel:
-                    btn.setText(f"🕒 {name}") # 恢复时钟，但保持移除 ✅
+                    btn.setText(f"✔ {name}")
+                    btn.setProperty("selected", True)
                 else:
-                    btn.setText(f"🕒 {name}") # 恢复时钟
+                    btn.setText(f"🕒 {name}")
+                    btn.setProperty("selected", False)
 
     def _on_tag_clicked(self, name, checked):
         if checked:

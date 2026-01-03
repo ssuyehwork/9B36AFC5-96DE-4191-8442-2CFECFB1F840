@@ -351,4 +351,57 @@ QMenu::separator {
     background: #454545;
     margin: 4px 0px;
 }
+
+/* =======================================================
+   标签悬浮面板
+   ======================================================= */
+#TagPopupContainer {
+    background-color: #252526;
+    border-radius: 6px;
+    border: 1px solid #454545;
+}
+
+#TagPopupHeader {
+    color: #888888;
+    font-size: 12px;
+    padding: 0px 4px;
+    background: transparent;
+}
+
+#TagPopupButton {
+    background-color: transparent;
+    border: 1px solid #454545;
+    color: #cccccc;
+    border-radius: 12px;
+    padding: 4px 10px;
+    text-align: left;
+}
+#TagPopupButton:hover {
+    background-color: #3e3e42;
+}
+
+#TagPopupButton[selected="true"] {
+    background-color: #094771;
+    border-color: #007fd4;
+    color: #ffffff;
+}
+
+#TagCreateButton {
+    background-color: transparent;
+    border: none;
+    color: #569cd6;
+    padding: 8px 4px;
+    text-align: left;
+    border-radius: 4px;
+}
+#TagCreateButton:hover {
+    background-color: #3e3e42;
+}
+
+#TagPopupTip {
+    font-size: 11px;
+    color: #666666;
+    background: transparent;
+    padding: 2px 4px;
+}
 """

@@ -560,7 +560,12 @@ class DBManager:
         with self.Session() as session:
             try:
                 # 修复：使用 outerjoin 确保所有标签都被统计，即使它们没有关联任何项目
-                stats['tags'] = session.query(Tag.name, func.count(item_tags.c.item_id)).outerjoin(item_tags).group_by(Tag.id).all()
+                # 增加按最近使用时间排序
+                last_used_time = func.max(ClipboardItem.modified_at).label("last_used")
+                stats['tags'] = session.query(
+                    Tag.name,
+                    func.count(item_tags.c.item_id)
+                ).outerjoin(item_tags).outerjoin(ClipboardItem).group_by(Tag.id).order_by(last_used_time.desc()).all()
                 
                 # 修复: 恢复 stars 查询
                 stars = session.query(ClipboardItem.star_level, func.count(ClipboardItem.id)).group_by(ClipboardItem.star_level).all()
