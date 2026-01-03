@@ -198,6 +198,20 @@ class MainWindow(QWidget):
         if not self.db.get_items(limit=1):
             self._add_debug_test_item()
 
+    def quick_add_idea(self, text):
+        """从悬浮球快速添加文本到数据库"""
+        log(f"💡 从悬浮球接收到快速添加请求: {text}")
+        self.db.add_item(text, item_type='text')
+        self._update_list() # 添加后刷新列表
+
+    def new_idea(self):
+        """清空并聚焦搜索框以供输入"""
+        log("💡 '新建灵感' 被触发")
+        self.search_box.clear()
+        self.search_box.setFocus()
+        self.show()
+        self.activateWindow()
+
     def _init_ui(self):
         self.setWindowTitle("Clipboard Pro")
         self.resize(830, 630)
@@ -248,11 +262,10 @@ class MainWindow(QWidget):
         self.btn_toggle_side.setToolTip("显示/隐藏侧边栏")
         self.btn_toggle_side.setFixedSize(32, 32)
         
-        # 3. 启动完整界面 (Open Main) - [新增]
+        # 3. 启动完整界面 (Open Main)
         self.btn_open_full = QPushButton(self)
         self.btn_open_full.setObjectName("MaxButton")
         self.btn_open_full.setToolTip("打开主程序界面")
-        # 使用最大化图标表示"完整界面"
         self.btn_open_full.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
         self.btn_open_full.setFixedSize(32, 32)
 
