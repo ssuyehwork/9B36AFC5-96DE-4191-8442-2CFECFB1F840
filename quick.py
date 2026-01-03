@@ -5,12 +5,15 @@ import ctypes
 from ctypes import wintypes
 import time
 import datetime
-import subprocess  # <--- 新增导入，用于启动外部进程
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit, 
-                             QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem, 
+import subprocess
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
+                             QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
 from PyQt5.QtGui import QImage, QColor, QCursor
+
+# Import the new dialog
+from ui.dialog_new_idea import NewIdeaDialog
 
 # =================================================================================
 #   Win32 API 定义
@@ -205,12 +208,32 @@ class MainWindow(QWidget):
         self._update_list() # 添加后刷新列表
 
     def new_idea(self):
-        """清空并聚焦搜索框以供输入"""
-        log("💡 '新建灵感' 被触发")
-        self.search_box.clear()
-        self.search_box.setFocus()
+        """弹出'新建灵感'对话框，并处理结果"""
+        log("💡 '新建灵感' 被触发，正在打开对话框...")
+
+        # 确保快速面板可见，否则对话框可能无法正确显示或成为焦点
         self.show()
         self.activateWindow()
+
+        dialog = NewIdeaDialog(self)
+
+        # 以模态方式执行对话框
+        if dialog.exec_(): # exec_() for PyQt5
+            idea_text = dialog.get_idea_text()
+            if idea_text:
+                log(f"✅ 对话框被接受，保存新灵感: '{idea_text[:50]}...'")
+                # 使用现有的方法添加 item
+                self.db.add_item(idea_text, item_type='text')
+                # 刷新列表以显示新项目
+                self._update_list()
+
+                # 可选：将新项目滚动到视野中并选中
+                if self.list_widget.count() > 0:
+                    self.list_widget.setCurrentRow(0)
+            else:
+                log("🟡 对话框被接受，但内容为空，不执行任何操作。")
+        else:
+            log("❌ 对话框被取消。")
 
     def _init_ui(self):
         self.setWindowTitle("Clipboard Pro")
