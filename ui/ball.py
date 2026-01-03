@@ -184,11 +184,11 @@ class FloatingBall(QWidget):
 
         # 辉光层
         p.setPen(glow_color)
-        p.drawText(self.rect().adjusted(1,1,1,1), Qt.AlignCenter, '⚡')
+        p.drawText(self.rect().adjusted(1,1,1,1), Qt.AlignCenter, '✏️')
 
         # 实体层
         p.setPen(QColor(255, 255, 255))
-        p.drawText(self.rect(), Qt.AlignCenter, '⚡')
+        p.drawText(self.rect(), Qt.AlignCenter, '✏️')
 
     # --- 交互逻辑 ---
     def dragEnterEvent(self, e):

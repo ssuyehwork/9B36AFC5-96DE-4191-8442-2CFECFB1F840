@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction, QApplication, QStyle
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import pyqtSignal
 
@@ -11,9 +11,9 @@ class TrayManager(QSystemTrayIcon):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # 设置图标 (这里使用一个Qt内置的标准图标作为占位符)
-        # 理想情况下, 这里应该使用一个 .ico 或 .png 文件
-        self.setIcon(QIcon.fromTheme("utilities-terminal"))
+        # 使用 Qt 内置的标准图标，确保在所有平台上都可见
+        app_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
+        self.setIcon(app_icon)
 
         self.setToolTip("Clipboard Pro")
 
