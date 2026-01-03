@@ -463,7 +463,22 @@ class MainWindow(QWidget):
                     # partition_filter 保持为 None
                 elif partition_data['type'] != 'all':
                     partition_filter = partition_data
-        items = self.db.get_items(search=search_text, partition_filter=partition_filter, date_modify_filter=date_modify_filter, limit=None)
+        # 1. 从数据库获取未经过滤的数据
+        all_items = self.db.get_items(partition_filter=partition_filter, date_modify_filter=date_modify_filter, limit=None)
+
+        # 2. 在内存中进行搜索过滤
+        if search_text:
+            search_text_lower = search_text.lower()
+            filtered_items = []
+            for item in all_items:
+                content_match = search_text_lower in getattr(item, 'content', '').lower()
+                note_match = search_text_lower in getattr(item, 'note', '').lower()
+                if content_match or note_match:
+                    filtered_items.append(item)
+            items = filtered_items
+        else:
+            items = all_items
+
         self.list_widget.clear()
         self._add_debug_test_item()
         for item in items:
