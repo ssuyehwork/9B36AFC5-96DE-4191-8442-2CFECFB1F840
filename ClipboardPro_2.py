@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import sys
 import logging
 import traceback
@@ -64,14 +64,13 @@ def main():
             return
 
     try:
-        # === 核心修改：从 ui 包导入 main_window ===
-        # 因为文件结构是:
-        # root/ClipboardPro_2.py
-        # root/ui/main_window.py
-        from ui.main_window import MainWindow
-        
-        # 创建主窗口实例
-        window = MainWindow()
+        # === 核心修改：从 quick.py 导入快速面板窗口 ===
+        from quick import MainWindow as QuickPanelWindow
+        from data.database import DBManager
+
+        # 创建数据库管理器和快速面板实例
+        db_manager = DBManager()
+        window = QuickPanelWindow(db_manager=db_manager)
         
         window.show()
         
