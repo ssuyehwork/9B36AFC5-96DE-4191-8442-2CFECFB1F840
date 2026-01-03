@@ -1,33 +1,18 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import sys
 import logging
 import traceback
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject
 
 # === 配置日志 ===
-# 创建日志格式
-log_format = logging.Formatter(
-    '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%H:%M:%S'
-)
-
-# 控制台输出
+log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', datefmt='%H:%M:%S')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(log_format)
-
-# 文件输出
-file_handler = logging.FileHandler('debug_main.log', encoding='utf-8', mode='a')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(log_format)
-
-# 配置根日志
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.DEBUG)
 root_logger.addHandler(console_handler)
-root_logger.addHandler(file_handler)
-
 log = logging.getLogger("MainEntry")
 
 def exception_hook(exctype, value, tb):
@@ -37,53 +22,73 @@ def exception_hook(exctype, value, tb):
 
 sys.excepthook = exception_hook
 
+# --- App Controller ---
+class AppController(QObject):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+        from data.database import DBManager
+        from quick import MainWindow as QuickPanelWindow
+        from ui.ball import FloatingBall
+
+        self.db_manager = DBManager()
+        self.quick_panel = QuickPanelWindow(db_manager=self.db_manager)
+
+        # 将 quick_panel 实例作为 main_window 参数传递给悬浮球
+        self.ball = FloatingBall(main_window=self.quick_panel)
+
+        self._connect_signals()
+
+        self.ball.show()
+        # 默认不显示快速面板，通过悬浮球的菜单或双击来触发
+        # self.quick_panel.show()
+
+    def _connect_signals(self):
+        # 悬浮球右键菜单 -> 显示快速面板
+        self.ball.request_show_quick_window.connect(self.show_quick_panel)
+        # 悬浮球双击 -> 同样显示快速面板
+        self.ball.double_clicked.connect(self.show_quick_panel)
+
+        # 悬浮球右键菜单 -> 显示主窗口
+        self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
+
+        # 悬浮球右键菜单 -> 退出
+        self.ball.request_quit_app.connect(self.app.quit)
+
+    def show_quick_panel(self):
+        if self.quick_panel.isVisible():
+            self.quick_panel.hide()
+        else:
+            self.quick_panel.show()
+            self.quick_panel.activateWindow()
+            self.quick_panel.raise_()
+
 def main():
-    log.info("🚀 启动印象记忆_Pro (主界面版)...")
+    log.info("🚀 启动印象记忆_Pro...")
     
-    # 高 DPI 适配
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("ClipboardManagerPro_Main")
+    app.setApplicationName("ClipboardManagerPro")
     
-    # 单实例检测 (使用不同的锁名称，允许 QuickPanel 和 Main 同时运行)
     from PyQt5.QtCore import QSharedMemory
-    shared_mem = QSharedMemory("ClipboardPro_Main_Instance")
+    shared_mem = QSharedMemory("ClipboardPro_Main_Instance_Lock")
     
     if shared_mem.attach():
-        # 如果主界面已经在运行，则退出
-        log.info("⚠️ 主界面已在运行中。")
+        log.info("⚠️ 应用已在运行中.")
         return
     else:
-        # 创建锁
         if not shared_mem.create(1):
             log.error("❌ 无法创建单实例锁")
             return
 
     try:
-        # === 核心修改：从 quick.py 导入快速面板窗口 ===
-        from quick import MainWindow as QuickPanelWindow
-        from data.database import DBManager
-
-        # 创建数据库管理器和快速面板实例
-        db_manager = DBManager()
-        window = QuickPanelWindow(db_manager=db_manager)
-        
-        window.show()
-        
-        # 窗口居中逻辑
-        screen_geo = app.desktop().screenGeometry()
-        window_geo = window.geometry()
-        window.move(
-            (screen_geo.width() - window_geo.width()) // 2,
-            (screen_geo.height() - window_geo.height()) // 2
-        )
-        
+        controller = AppController(app)
         sys.exit(app.exec_())
-        
     except Exception as e:
         log.critical(f"❌ 启动失败: {e}", exc_info=True)
 
