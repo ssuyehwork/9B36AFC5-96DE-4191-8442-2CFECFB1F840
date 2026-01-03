@@ -3,6 +3,7 @@ import logging
 import ctypes
 import os
 from ctypes.wintypes import MSG
+from datetime import datetime, time, timedelta
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QDockWidget, QLabel, QPushButton, QFrame, 
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         
         # 3. 边缘判定范围 (加大到 8px 确保能轻松点到)
         self.border_width = 8
+        self.is_pinned = False
         
         # 变量
         self.edit_mode = False
@@ -83,6 +85,10 @@ class MainWindow(QMainWindow):
         self._processing_clipboard = False  # 防止剪贴板事件重复处理
         self.item_id_to_select_after_load = None # 用于处理列表加载后的高亮
         
+        # === 新增：缓存当前页加载的完整数据 ===
+        self.cached_items = []  # 存储 ClipboardItem 对象列表
+        self.cached_items_map = {} # 新增ID到对象的快速映射
+
         # 定时器
         self.save_timer = QTimer(); self.save_timer.setSingleShot(True); self.save_timer.setInterval(500)
         self.save_timer.timeout.connect(self.save_window_state)
@@ -132,7 +138,8 @@ class MainWindow(QMainWindow):
         self.title_bar = CustomTitleBar(self)
         self.title_bar.refresh_clicked.connect(self.load_data)
         self.title_bar.theme_clicked.connect(self.toggle_theme)
-        self.title_bar.search_changed.connect(lambda: self.load_data(reset_page=True))
+        # === 核心修改：搜索框改为前端过滤 ===
+        self.title_bar.search_changed.connect(self._apply_frontend_filters)  # 原来是 lambda: self.load_data(reset_page=True)
         # self.title_bar.sort_changed.connect(self.change_sort) # 移除旧的连接
         self.title_bar.display_count_changed.connect(self.on_display_count_changed) # 添加新的连接
         self.title_bar.pin_clicked.connect(self.toggle_pin)
@@ -172,7 +179,8 @@ class MainWindow(QMainWindow):
         self.dock_filter.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         
         self.filter_panel = FilterPanel() 
-        self.filter_panel.filterChanged.connect(lambda: self.load_data(reset_page=True))
+        # === 核心修改：筛选器改为前端过滤 ===
+        self.filter_panel.filterChanged.connect(self._apply_frontend_filters)  # 原来是 lambda: self.load_data(reset_page=True)
         self.dock_filter.setWidget(self.filter_panel)
         self.dock_container.addDockWidget(Qt.LeftDockWidgetArea, self.dock_filter)
         
@@ -581,7 +589,7 @@ class MainWindow(QMainWindow):
             s.setValue(f"col_{i}_align", align)
         
         # 保存置顶状态
-        s.setValue("is_pinned", bool(self.windowFlags() & Qt.WindowStaysOnTopHint))
+        s.setValue("is_pinned", self.is_pinned)
         
         # 保存每页显示数量
         s.setValue("pageSize", self.page_size)
@@ -626,10 +634,11 @@ class MainWindow(QMainWindow):
                 self.dock_container.resizeDocks(right_docks, [right_width] * len(right_docks), Qt.Horizontal)
 
         # 恢复置顶状态
-        if s.value("is_pinned", False, type=bool):
+        self.is_pinned = s.value("is_pinned", False, type=bool)
+        if self.is_pinned:
             self.toggle_pin(True)
-            if hasattr(self.title_bar, 'btn_pin'):
-                self.title_bar.btn_pin.setChecked(True)
+        if hasattr(self.title_bar, 'btn_pin'):
+            self.title_bar.btn_pin.setChecked(self.is_pinned)
 
         # 强制显示面板，防止旧Bug导致隐藏
         self.dock_filter.setVisible(True)
@@ -740,52 +749,58 @@ class MainWindow(QMainWindow):
         if self.page * self.page_size < self.total_items: self.page += 1; self.load_data()
 
     def load_data(self, reset_page=False):
+        """
+        从数据库加载数据（不包含前端筛选条件）
+        只处理：分区过滤、日期过滤、分页
+        """
         try:
             log.info(f"🔄 开始加载数据 (reset_page={reset_page})")
-            if reset_page: self.page = 1 # 保留以备将来使用
+            if reset_page:
+                self.page = 1
+
+            # === 只保留数据库层面的筛选 ===
+            partition_filter = self.partition_panel.get_current_selection()
             
-            tags = self.filter_panel.get_checked('tags')
-            stars = self.filter_panel.get_checked('stars')
-            colors = self.filter_panel.get_checked('colors')
-            types = self.filter_panel.get_checked('types')
+            # 日期筛选（数据库层面）
             date_filter = None
             date_opts = self.filter_panel.get_checked('date_create')
-            if date_opts: date_filter = date_opts[0]
+            if date_opts:
+                date_filter = date_opts[0]
             
             date_modify_filter = None
             date_modify_opts = self.filter_panel.get_checked('date_modify')
-            if date_modify_opts: date_modify_filter = date_modify_opts[0]
+            if date_modify_opts:
+                date_modify_filter = date_modify_opts[0]
             
-            search = self.title_bar.get_search_text()
-            partition_filter = self.partition_panel.get_current_selection()
-            
-            # 新增逻辑：如果选择“今日数据”，则覆盖日期筛选器并清除分区筛选
+            # 今日数据特殊处理
             if partition_filter and partition_filter.get('type') == 'today':
                 date_modify_filter = '今日'
-                partition_filter = None  # 确保不按分区筛选
+                partition_filter = None
 
-            # 彻底恢复多选功能：无论是否在回收站，均允许 ExtendedSelection (Shift/Ctrl+点击)
+            # 设置选择模式
             self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
             
+            # 设置回收站视图标记
             if partition_filter and partition_filter.get('type') == 'trash':
                 self.table.is_trash_view = True
             else:
                 self.table.is_trash_view = False
 
-            log.info(f"🔍 筛选条件: 星级={stars}, 颜色={colors}, 类型={types}, 标签={tags}, 创建日期={date_filter}, 修改日期={date_modify_filter}, 搜索={search}, 显示数量={self.page_size}")
+            log.info(f"🔍 数据库筛选条件: 分区={partition_filter}, 创建日期={date_filter}, 修改日期={date_modify_filter}")
             
-            filters = {'stars': stars, 'colors': colors, 'types': types}
+            # === 获取总数（不带前端筛选） ===
+            self.total_items = self.db.get_count(
+                partition_filter=partition_filter,
+                date_filter=date_filter,
+                date_modify_filter=date_modify_filter
+            )
             
-            # 获取总数
-            self.total_items = self.db.get_count(filters=filters, search=search, selected_tags=tags, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter)
-            
+            # 分页计算
             limit = self.page_size
             offset = 0
 
-            # 模式判断
             if self.page_size != -1:
-                # 分页模式
-                self.bottom_bar.show() # 确保分页栏可见
+                self.bottom_bar.show()
                 total_pages = (self.total_items + self.page_size - 1) // self.page_size if self.page_size > 0 else 1
                 self.lbl_page.setText(f"{self.page} / {total_pages if total_pages > 0 else 1}")
                 
@@ -799,107 +814,249 @@ class MainWindow(QMainWindow):
 
                 offset = (self.page - 1) * self.page_size
             else:
-                # 显示全部模式
-                self.bottom_bar.show() # 确保分页栏可见
-                limit = None # 无限制
+                self.bottom_bar.show()
+                limit = None
                 self.lbl_page.setText("1 / 1")
                 self.btn_first.setEnabled(False)
                 self.btn_prev.setEnabled(False)
                 self.btn_next.setEnabled(False)
                 self.btn_last.setEnabled(False)
 
+            # === 从数据库查询数据（不带前端筛选） ===
             items = self.db.get_items(
-                filters=filters, search=search, selected_tags=tags, 
                 sort_mode=self.current_sort_mode,
-                limit=limit, offset=offset, date_filter=date_filter, date_modify_filter=date_modify_filter,
+                limit=limit,
+                offset=offset,
+                date_filter=date_filter,
+                date_modify_filter=date_modify_filter,
                 partition_filter=partition_filter
             )
             
+            # === 缓存查询结果 ===
+            self.cached_items = items
+            self.cached_items_map = {item.id: item for item in items} # 新增一个字典
+            log.info(f"✅ 从数据库加载 {len(items)} 条数据并缓存")
+
+            # === 填充表格（显示所有行） ===
             self.table.blockSignals(True)
             self.table.setRowCount(len(items))
+
             for row, item in enumerate(items):
-                # ID列索引从9改为8
+                # ID列
                 self.table.setItem(row, 8, QTableWidgetItem(str(item.id)))
                 
-                # 状态列：显示颜色圆点和状态图标，不显示序号
+                # 状态列
                 st_flags = ""
                 if item.is_pinned: st_flags += "📌"
                 if item.is_favorite: st_flags += "❤️"
                 if item.is_locked: st_flags += "🔒"
                 
-                # 类型图标提取
-                type_icon = ""
-                if item.item_type == 'url':
-                    type_icon = "🔗"
-                elif item.item_type == 'image':
-                    type_icon = "🖼️"
-                elif item.item_type == 'file' and item.file_path:
-                    if os.path.exists(item.file_path):
-                        if os.path.isdir(item.file_path):
-                            type_icon = "📂"
-                        else:
-                            ext = os.path.splitext(item.file_path)[1].lower()
-                            if ext in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma']:
-                                type_icon = "🎵"
-                            elif ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp']:
-                                type_icon = "🖼️"
-                            elif ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv']:
-                                type_icon = "🎬"
-                            else:
-                                type_icon = "📄"
-                    else:
-                        type_icon = "📄" # 文件丢失
-                        
-                # 组合显示: 状态标记 + 类型图标
-                # 优先显示类型图标，然后是状态
+                type_icon = self._get_type_icon(item)
                 display_text = f"{type_icon} {st_flags}".strip()
                 
                 state_item = QTableWidgetItem(display_text)
-                if item.custom_color: state_item.setIcon(get_color_icon(item.custom_color))
-                self.table.setItem(row, 0, state_item)  # 状态列（索引0）
+                if item.custom_color:
+                    state_item.setIcon(get_color_icon(item.custom_color))
+                self.table.setItem(row, 0, state_item)
+
+                # 其他列
+                self.table.setItem(row, 1, QTableWidgetItem(item.content.replace('\n', ' ')[:100]))
+                self.table.setItem(row, 2, QTableWidgetItem(item.note))
                 
-                # 其他列（索引调整：移除了"序"列）
-                self.table.setItem(row, 1, QTableWidgetItem(item.content.replace('\n', ' ')[:100]))  # 内容
-                self.table.setItem(row, 2, QTableWidgetItem(item.note))  # 备注
                 star_item = QTableWidgetItem("★" * item.star_level)
-                # star_item.setForeground(QColor("#FFD700"))
-                self.table.setItem(row, 3, star_item)  # 星级
-                self.table.setItem(row, 4, QTableWidgetItem(format_size(item.content)))  # 大小
+                self.table.setItem(row, 3, star_item)
+
+                self.table.setItem(row, 4, QTableWidgetItem(format_size(item.content)))
+
                 if item.is_file and item.file_path:
                     _, ext = os.path.splitext(item.file_path)
                     type_str = ext.upper()[1:] if ext else "FILE"
-                else: type_str = "TXT"
-                self.table.setItem(row, 5, QTableWidgetItem(type_str))  # 类型
-                self.table.setItem(row, 6, QTableWidgetItem(item.created_at.strftime("%m-%d %H:%M")))  # 创建时间
+                else:
+                    type_str = "TXT"
+                self.table.setItem(row, 5, QTableWidgetItem(type_str))
+
+                self.table.setItem(row, 6, QTableWidgetItem(item.created_at.strftime("%m-%d %H:%M")))
+
+                # 隐藏列
+                self.table.setItem(row, 7, QTableWidgetItem(item.file_path or ""))
                 
                 # 设置对齐方式
-                for col in range(7):  # 从8改为7（因为只有9列，隠藏了7,8）
+                for col in range(7):
                     align = self.col_alignments.get(col, Qt.AlignLeft | Qt.AlignVCenter if col in [1,2] else Qt.AlignCenter)
                     it = self.table.item(row, col)
-                    if it: it.setTextAlignment(align)
+                    if it:
+                        it.setTextAlignment(align)
+
             self.table.blockSignals(False)
             
-            # --- 新的统计逻辑 ---
-            # 1. 基于当前显示的 items 计算统计信息
-            stats = self._calculate_stats_from_items(items)
-            # 2. 更新筛选器面板
-            self.filter_panel.update_stats(stats)
+            # === 应用前端过滤 ===
+            self._apply_frontend_filters()
             
-            # 标签面板和状态栏仍然使用全局信息
+            # 标签面板和详情面板
             self.tag_panel.refresh_tags(self.db)
-            self.lbl_status.setText(f"总计: {self.total_items} 条 (当前显示: {len(items)} 条)")
             
             # 修复：检查是否有待高亮的项目
             if self.item_id_to_select_after_load is not None:
                 self.select_item_in_table(self.item_id_to_select_after_load)
-                self.item_id_to_select_after_load = None # 清空
+                self.item_id_to_select_after_load = None
 
-        except Exception as e: log.error(f"Load Error: {e}", exc_info=True)
+            log.info("✅ 数据加载完成")
+
+        except Exception as e:
+            log.error(f"Load Error: {e}", exc_info=True)
+
+
+    def _apply_frontend_filters(self):
+        """
+        前端过滤：根据筛选器勾选状态和搜索关键词，隐藏/显示表格行
+        不触发数据库查询，只操作已加载的数据
+        """
+        log.info("🎭 应用前端过滤...")
+
+        # 1. 获取筛选条件
+        search_text = self.title_bar.get_search_text().strip().lower()
+        stars = set(self.filter_panel.get_checked('stars'))
+        colors = set(self.filter_panel.get_checked('colors'))
+        types = set(self.filter_panel.get_checked('types'))
+        tags = set(self.filter_panel.get_checked('tags'))
+
+        log.debug(f"   筛选条件: 搜索='{search_text}', 星级={stars}, 颜色={colors}, 类型={types}, 标签={tags}")
+
+        # 2. 遍历表格的每一行，判断是否应该显示
+        visible_count = 0
+        visible_items = []  # 收集可见项用于统计
+
+        for row in range(self.table.rowCount()):
+            should_show = True
+
+            # 通过 ID 获取对应的 item 对象
+            id_item = self.table.item(row, 8)
+            if not id_item or not id_item.text():
+                self.table.setRowHidden(row, True)
+                continue
+
+            item_id = int(id_item.text())
+
+            # 从缓存中查找对应的 item 对象
+            item = None
+            for cached_item in self.cached_items:
+                if cached_item.id == item_id:
+                    item = cached_item
+                    break
+
+            if not item:
+                self.table.setRowHidden(row, True)
+                continue
+
+            # === 开始判断筛选条件 ===
+
+            # 2.1 搜索关键词过滤
+            if search_text:
+                # 搜索内容、备注、标签名
+                content_match = search_text in item.content.lower()
+                note_match = search_text in (item.note or "").lower()
+                tag_match = any(search_text in tag.name.lower() for tag in item.tags)
+
+                if not (content_match or note_match or tag_match):
+                    should_show = False
+
+            # 2.2 星级过滤
+            if should_show and stars:
+                if item.star_level not in stars:
+                    should_show = False
+
+            # 2.3 颜色过滤
+            if should_show and colors:
+                if not item.custom_color or item.custom_color not in colors:
+                    should_show = False
+
+            # 2.4 类型过滤
+            if should_show and types:
+                item_type_key = self._get_item_type_key(item)
+                if item_type_key not in types:
+                    should_show = False
+
+            # 2.5 标签过滤
+            if should_show and tags:
+                item_tag_names = {tag.name for tag in item.tags}
+                if not item_tag_names.intersection(tags):
+                    should_show = False
+
+            # === 设置行的可见性 ===
+            self.table.setRowHidden(row, not should_show)
+
+            if should_show:
+                visible_count += 1
+                visible_items.append(item)
+
+        log.info(f"✅ 前端过滤完成: 显示 {visible_count}/{self.table.rowCount()} 行")
+
+        # 3. 根据可见项更新筛选器统计
+        stats = self._calculate_stats_from_items(visible_items)
+        self.filter_panel.update_stats(stats)
+
+        # 4. 更新状态栏
+        self.lbl_status.setText(f"总计: {self.total_items} 条 | 当前页: {len(self.cached_items)} 条 | 显示: {visible_count} 条")
+
+
+    def _get_type_icon(self, item):
+        """获取项目的类型图标"""
+        if item.item_type == 'url':
+            return "🔗"
+        elif item.item_type == 'image':
+            return "🖼️"
+        elif item.item_type == 'file' and item.file_path:
+            if os.path.exists(item.file_path):
+                if os.path.isdir(item.file_path):
+                    return "📂"
+                else:
+                    ext = os.path.splitext(item.file_path)[1].lower()
+                    if ext in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma']:
+                        return "🎵"
+                    elif ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp']:
+                        return "🖼️"
+                    elif ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv']:
+                        return "🎬"
+                    else:
+                        return "📄"
+            else:
+                return "📄"
+        return "📝"
+
+
+    def _get_item_type_key(self, item):
+        """
+        获取项目的类型键值，用于类型筛选匹配
+        返回值需要与筛选器面板的类型选项一致
+        """
+        if item.item_type == 'text':
+            return 'text'
+        elif item.item_type == 'url':
+            return 'url'
+        elif item.item_type == 'file' and item.file_path:
+            if os.path.exists(item.file_path):
+                if os.path.isdir(item.file_path):
+                    return 'folder'
+                else:
+                    _, ext = os.path.splitext(item.file_path)
+                    return ext.lstrip('.').upper() if ext else 'FILE'
+            else:
+                return 'FILE'
+        elif item.item_type == 'image':
+            path = item.image_path or item.file_path
+            if path:
+                _, ext = os.path.splitext(path)
+                return ext.lstrip('.').upper() if ext else 'IMAGE'
+            else:
+                return 'IMAGE'
+        else:
+            return 'text'
+
 
     def _calculate_stats_from_items(self, items):
         """根据给定的项目列表计算统计数据"""
-        from data.database import Tag # 局部导入以避免循环依赖
-        stats = {'tags': {}, 'stars': {}, 'colors': {}, 'types': {}}
+        from data.database import Tag
+        stats = {'tags': {}, 'stars': {}, 'colors': {}, 'types': {}, 'date_create': {}, 'date_modify': {}}
         
         session = self.db.get_session()
         try:
@@ -918,40 +1075,19 @@ class MainWindow(QMainWindow):
                 for tag in item.tags:
                     stats['tags'][tag.name] = stats['tags'].get(tag.name, 0) + 1
 
-                # 统计类型 (与数据库中的逻辑保持一致)
-                key = item.item_type
-                if item.item_type == 'file' and item.file_path and os.path.exists(item.file_path):
-                    if os.path.isdir(item.file_path):
-                        key = 'folder'
-                    else:
-                        _, ext = os.path.splitext(item.file_path)
-                        key = ext.lstrip('.').upper() if ext else 'FILE'
-                elif item.item_type == 'image':
-                    path = item.image_path or item.file_path
-                    if path:
-                        _, ext = os.path.splitext(path)
-                        key = ext.lstrip('.').upper() if ext else 'IMAGE'
-                    else:
-                        key = 'IMAGE'
-                
-                if key not in ['text', 'url', 'folder']:
-                    key = key.upper()
-                
+                # 统计类型
+                key = self._get_item_type_key(item)
                 stats['types'][key] = stats['types'].get(key, 0) + 1
 
         finally:
             session.close()
         
-        # 转换标签格式以匹配 FilterPanel 的期望输入
-        # 并确保数据库中存在但当前未显示的标签也以 0 的计数包含在内
+        # 转换标签格式，确保数据库中存在但当前未显示的标签也以 0 的计数包含
         final_tags = {tag_name: 0 for tag_name in all_tags_in_db}
-
         final_tags.update(stats['tags'])
         stats['tags'] = list(final_tags.items())
-
-        # 日期统计 (也基于当前 items)
-        from datetime import datetime, time, timedelta
         
+        # 日期统计
         def get_date_label(dt):
             today = datetime.now().date()
             if dt.date() == today: return "今日"
@@ -967,8 +1103,6 @@ class MainWindow(QMainWindow):
                 return "上月"
             return None
 
-        stats['date_create'] = {}
-        stats['date_modify'] = {}
         for item in items:
             if label := get_date_label(item.created_at):
                 stats['date_create'][label] = stats['date_create'].get(label, 0) + 1
@@ -999,23 +1133,19 @@ class MainWindow(QMainWindow):
         # self.schedule_save_state() # (可选) 如果需要保存这个设置
 
     def toggle_pin(self, checked):
-        """窗口置顶功能 - 修复"""
+        """窗口置顶功能 - 使用 Windows API"""
         try:
             log.info(f"📌 切换窗口置顶状态: {checked}")
-            
-            # 使用 Qt 标准标志位而不是 Win32 API，兼容性更好
-            # 注意: setWindowFlag 会隐藏窗口，需要重新 show()
-            # 为了避免闪烁，通常需要小心处理，但在 Frameless 模式下，Qt 标志通常有效
-            
-            # 保留现有的 Flags (Frameless 等)
-            current_flags = self.windowFlags()
+            self.is_pinned = checked
+            hwnd = int(self.winId())
             
             if checked:
-                self.setWindowFlags(current_flags | Qt.WindowStaysOnTopHint)
+                # 设置置顶
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
             else:
-                self.setWindowFlags(current_flags & ~Qt.WindowStaysOnTopHint)
+                # 取消置顶
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
             
-            self.show()
             self.schedule_save_state()
                 
         except Exception as e:
