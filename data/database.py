@@ -209,7 +209,10 @@ class DBManager:
     def _build_query(self, session, sort_mode="manual", date_filter=None, date_modify_filter=None, partition_filter=None, include_deleted=False):
         log.debug(f"🔍 构建查询: sort={sort_mode}, date={date_filter}, date_modify={date_modify_filter}, partition={partition_filter}, deleted={include_deleted}")
         q = session.query(ClipboardItem).options(joinedload(ClipboardItem.tags))
-        q = q.filter(ClipboardItem.is_deleted == include_deleted)
+        if include_deleted:
+            q = q.filter(ClipboardItem.is_deleted == True)
+        else:
+            q = q.filter(ClipboardItem.is_deleted != True)
         
         if partition_filter:
             ptype = partition_filter.get('type')
