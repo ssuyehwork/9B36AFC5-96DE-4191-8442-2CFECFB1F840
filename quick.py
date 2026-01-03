@@ -153,6 +153,7 @@ class MainWindow(QWidget):
         self.last_focus_hwnd = None
         self.last_thread_id = None
         self.my_hwnd = None
+        self.main_window_instance = None # 持有主窗口实例
         
         # --- Clipboard Manager ---
         self.cm = ClipboardManager(self.db)
@@ -314,25 +315,28 @@ class MainWindow(QWidget):
 
     # --- Launch Main App Logic ---
     def _launch_main_app(self):
-        """启动 ClipboardPro_2.py"""
+        """创建并显示主数据管理窗口"""
         try:
-            # 获取当前脚本所在目录
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(current_dir, "ClipboardPro_2.py")
-            
-            if os.path.exists(script_path):
-                log(f"🚀 正在启动: {script_path}")
-                # 使用 subprocess.Popen 启动新进程，不阻塞当前界面
-                subprocess.Popen([sys.executable, script_path])
+            if self.main_window_instance and self.main_window_instance.isVisible():
+                self.main_window_instance.activateWindow()
+                self.main_window_instance.raise_()
             else:
-                log(f"❌ 找不到文件: {script_path}")
-                # 尝试启动 main_window.py 作为备选
-                alt_path = os.path.join(current_dir, "main_window.py")
-                if os.path.exists(alt_path):
-                    log(f"⚠️ 尝试启动 main_window.py: {alt_path}")
-                    subprocess.Popen([sys.executable, alt_path])
+                from ui.main_window import MainWindow
+
+                # 创建并持有实例
+                self.main_window_instance = MainWindow()
+                self.main_window_instance.show()
+
+                # 居中显示
+                screen_geo = QApplication.desktop().screenGeometry()
+                window_geo = self.main_window_instance.geometry()
+                self.main_window_instance.move(
+                    (screen_geo.width() - window_geo.width()) // 2,
+                    (screen_geo.height() - window_geo.height()) // 2
+                )
+
         except Exception as e:
-            log(f"❌ 启动失败: {e}")
+            log(f"❌ 启动主窗口失败: {e}")
 
     # --- Restore & Save State ---
     def _restore_window_state(self):
@@ -627,54 +631,3 @@ class MainWindow(QWidget):
                 mock_data = type('obj', (object,), {'item_type': 'text', 'content': f'Content {i}'})
                 item.setData(Qt.UserRole, mock_data)
                 self.list_widget.addItem(item)
-
-if __name__ == '__main__':
-    log("🚀 程序启动 (quick.py 作为主入口)")
-    
-    # 高 DPI 适应
-    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("ClipboardProQuickPanel")
-
-    # --- 单实例检测 ---
-    from PyQt5.QtCore import QSharedMemory
-    shared_mem = QSharedMemory("ClipboardPro_QuickPanel_Instance")
-    
-    # 尝试附加到现有内存段
-    if shared_mem.attach():
-        log("⚠️ 检测到已有 QuickPanel 实例在运行，程序将退出。")
-        sys.exit(0) # 正常退出
-    
-    # 创建新的共享内存段
-    if not shared_mem.create(1):
-        log(f"❌ 无法创建共享内存段: {shared_mem.errorString()}")
-        sys.exit(1) # 错误退出
-
-    log("✅ 单例锁创建成功，启动主程序...")
-
-    try: 
-        db_manager = DBManager()
-    except Exception as e:
-        log(f"❌ 数据库连接失败: {e}")
-        sys.exit(1)
-        
-    window = MainWindow(db_manager=db_manager)
-    window.show()
-    
-    # 窗口居中
-    try:
-        screen_geo = app.desktop().screenGeometry()
-        panel_geo = window.geometry()
-        window.move(
-            (screen_geo.width() - panel_geo.width()) // 2, 
-            (screen_geo.height() - panel_geo.height()) // 2
-        )
-        window.search_box.setFocus()
-    except Exception as e:
-        log(f"⚠️ 窗口居中失败: {e}")
-
-    sys.exit(app.exec_())
