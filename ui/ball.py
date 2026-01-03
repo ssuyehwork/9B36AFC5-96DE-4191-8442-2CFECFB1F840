@@ -2,10 +2,10 @@
 # ui/ball.py
 import math
 import random
-from PyQt5.QtWidgets import QWidget, QMenu, QApplication
+from PyQt5.QtWidgets import QWidget, QMenu
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QRectF
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QBrush
-from core.settings import save_setting, load_setting
+from core.settings import save_setting
 
 class FloatingBall(QWidget):
     request_show_quick_window = pyqtSignal()
@@ -43,17 +43,6 @@ class FloatingBall(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_physics)
         self.timer.start(16) # ~60FPS
-
-        self._load_position()
-
-    def _load_position(self):
-        pos_data = load_setting('floating_ball_pos')
-        if pos_data and 'x' in pos_data and 'y' in pos_data:
-            self.move(QPoint(pos_data['x'], pos_data['y']))
-        else:
-            # 默认放置在屏幕右上角
-            screen_geo = QApplication.desktop().screenGeometry()
-            self.move(screen_geo.width() - self.width() - 20, 100)
 
     def trigger_clipboard_feedback(self):
         """公共方法：触发剪贴板成功反馈特效"""

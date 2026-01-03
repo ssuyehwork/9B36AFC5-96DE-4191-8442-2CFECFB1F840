@@ -719,7 +719,17 @@ class MainWindow(QMainWindow):
 
         log.info(f"✅ 前端过滤完成: 显示 {visible_count}/{len(self.cached_items)} 行")
 
-        stats = self._calculate_stats_from_items(self.cached_items)
+        # Bug Fix: Calculate stats based on VISIBLE items, not all cached items.
+        visible_items = []
+        for row in range(self.table.rowCount()):
+            if not self.table.isRowHidden(row):
+                id_item = self.table.item(row, 8)
+                if id_item and id_item.text():
+                    item = self.cached_items_map.get(int(id_item.text()))
+                    if item:
+                        visible_items.append(item)
+
+        stats = self._calculate_stats_from_items(visible_items)
         self.filter_panel.update_stats(stats)
 
         self.lbl_status.setText(f"总计: {self.total_items} 条 | 当前页: {len(self.cached_items)} 条 | 显示: {visible_count} 条")
