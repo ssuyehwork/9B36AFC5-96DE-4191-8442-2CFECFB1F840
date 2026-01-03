@@ -263,10 +263,11 @@ class MainWindow(QWidget):
         self.btn_toggle_side.setFixedSize(32, 32)
         
         # 3. 启动完整界面 (Open Main)
-        self.btn_open_full = QPushButton("主窗口", self)
-        self.btn_open_full.setObjectName("ToolButton")
-        self.btn_open_full.setToolTip("打开主数据管理窗口")
-        self.btn_open_full.setFixedSize(60, 32)
+        self.btn_open_full = QPushButton(self)
+        self.btn_open_full.setObjectName("MaxButton")
+        self.btn_open_full.setToolTip("打开主程序界面")
+        self.btn_open_full.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
+        self.btn_open_full.setFixedSize(32, 32)
 
         # 4. 最小化 (Minimize)
         self.btn_minimize = QPushButton("—", self)

@@ -4,6 +4,7 @@ import logging
 import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QObject
+from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 
 # === 配置日志 ===
 log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', datefmt='%H:%M:%S')
@@ -40,19 +41,16 @@ class AppController(QObject):
 
         self._connect_signals()
 
-        # 根据您的要求，同时显示悬浮球和快速面板
         self.ball.show()
         self.quick_panel.show()
         self.tray.show()
 
     def _connect_signals(self):
-        # 悬浮球信号
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
         self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
         self.ball.request_quit_app.connect(self.app.quit)
 
-        # 托盘图标信号
         self.tray.request_show_quick_panel.connect(self.toggle_quick_panel)
         self.tray.request_quit.connect(self.app.quit)
 
@@ -64,6 +62,12 @@ class AppController(QObject):
             self.quick_panel.activateWindow()
             self.quick_panel.raise_()
 
+    def activate_window(self):
+        """激活并显示快速面板"""
+        self.quick_panel.show()
+        self.quick_panel.activateWindow()
+        self.quick_panel.raise_()
+
 def main():
     log.info("🚀 启动印象记忆_Pro...")
     
@@ -74,25 +78,47 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("ClipboardManagerPro")
-    # 关键：防止在最后一个窗口关闭时退出程序，除非显式调用 quit()
     app.setQuitOnLastWindowClosed(False)
     
-    from PyQt5.QtCore import QSharedMemory
-    shared_mem = QSharedMemory("ClipboardPro_Main_Instance_Lock_v2")
+    # --- 单例逻辑 ---
+    server_name = "ClipboardPro_Instance_Server"
+    socket = QLocalSocket()
+    socket.connectToServer(server_name)
     
-    if shared_mem.attach():
-        log.info("⚠️ 应用已在运行中.")
-        return
-    else:
-        if not shared_mem.create(1):
-            log.error("❌ 无法创建单实例锁")
-            return
+    if socket.waitForConnected(500):
+        log.info("⚠️ 应用已在运行中, 激活现有窗口.")
+        socket.write(b'RAISE')
+        socket.waitForBytesWritten(500)
+        socket.disconnectFromServer()
+        return # 新实例退出
+
+    # 没有现有实例，创建服务器
+    server = QLocalServer()
+    server.listen(server_name)
 
     try:
         controller = AppController(app)
+
+        # 连接服务器的新连接信号
+        def handle_new_connection():
+            new_socket = server.nextPendingConnection()
+            if new_socket:
+                new_socket.waitForReadyRead(1000)
+                command = new_socket.readAll().data().decode()
+                if command == 'RAISE':
+                    log.info("收到激活请求, 正在显示窗口...")
+                    controller.activate_window()
+                new_socket.disconnectFromServer()
+
+        server.newConnection.connect(handle_new_connection)
+
         sys.exit(app.exec_())
     except Exception as e:
         log.critical(f"❌ 启动失败: {e}", exc_info=True)
+    finally:
+        # 清理服务器
+        server.close()
+        server.removeServer(server_name)
 
 if __name__ == "__main__":
     main()
