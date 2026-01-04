@@ -675,34 +675,34 @@ class MainWindow(QMainWindow):
                 self.table.setRowCount(len(items))
                 for row, item in enumerate(items):
                     self.table.setItem(row, 8, QTableWidgetItem(str(item.id)))
-                
-                st_flags = ("📌" if item.is_pinned else "") + ("❤️" if item.is_favorite else "") + ("🔒" if item.is_locked else "")
-                display_text = f"{self._get_type_icon(item)} {st_flags}".strip()
-                state_item = QTableWidgetItem(display_text)
-                if item.custom_color:
-                    state_item.setIcon(get_color_icon(item.custom_color))
-                self.table.setItem(row, 0, state_item)
-                
-                self.table.setItem(row, 1, QTableWidgetItem(item.content.replace('\n', ' ')[:100]))
-                self.table.setItem(row, 2, QTableWidgetItem(item.note))
-                self.table.setItem(row, 3, QTableWidgetItem("★" * item.star_level))
-                self.table.setItem(row, 4, QTableWidgetItem(format_size(item.content)))
-                
-                if item.is_file and item.file_path:
-                    _, ext = os.path.splitext(item.file_path)
-                    type_str = ext.upper()[1:] if ext else "FILE"
-                else:
-                    type_str = "TXT"
-                self.table.setItem(row, 5, QTableWidgetItem(type_str))
-                
-                self.table.setItem(row, 6, QTableWidgetItem(item.created_at.strftime("%m-%d %H:%M")))
-                self.table.setItem(row, 7, QTableWidgetItem(item.file_path or ""))
-                
-                for col in range(7):
-                    align = self.col_alignments.get(col, Qt.AlignLeft | Qt.AlignVCenter if col in [1,2] else Qt.AlignCenter)
-                    table_item = self.table.item(row, col)
-                    if table_item:
-                        table_item.setTextAlignment(align)
+
+                    st_flags = ("📌" if item.is_pinned else "") + ("❤️" if item.is_favorite else "") + ("🔒" if item.is_locked else "")
+                    display_text = f"{self._get_type_icon(item)} {st_flags}".strip()
+                    state_item = QTableWidgetItem(display_text)
+                    if item.custom_color:
+                        state_item.setIcon(get_color_icon(item.custom_color))
+                    self.table.setItem(row, 0, state_item)
+
+                    self.table.setItem(row, 1, QTableWidgetItem(item.content.replace('\n', ' ')[:100]))
+                    self.table.setItem(row, 2, QTableWidgetItem(item.note))
+                    self.table.setItem(row, 3, QTableWidgetItem("★" * item.star_level))
+                    self.table.setItem(row, 4, QTableWidgetItem(format_size(item.content)))
+
+                    if item.is_file and item.file_path:
+                        _, ext = os.path.splitext(item.file_path)
+                        type_str = ext.upper()[1:] if ext else "FILE"
+                    else:
+                        type_str = "TXT"
+                    self.table.setItem(row, 5, QTableWidgetItem(type_str))
+
+                    self.table.setItem(row, 6, QTableWidgetItem(item.created_at.strftime("%m-%d %H:%M")))
+                    self.table.setItem(row, 7, QTableWidgetItem(item.file_path or ""))
+
+                    for col in range(8): # Iterate up to column 7
+                        align = self.col_alignments.get(col, Qt.AlignLeft | Qt.AlignVCenter if col in [1, 2, 7] else Qt.AlignCenter)
+                        table_item = self.table.item(row, col)
+                        if table_item:
+                            table_item.setTextAlignment(align)
             finally:
                 self.table.blockSignals(False)
                 self.table.setUpdatesEnabled(True)
