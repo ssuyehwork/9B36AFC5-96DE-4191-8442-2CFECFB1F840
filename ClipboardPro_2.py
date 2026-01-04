@@ -46,6 +46,9 @@ class AppController(QObject):
         self.tray.show()
 
     def _connect_signals(self):
+        # Connect clipboard capture signal to ball's feedback animation
+        self.quick_panel.cm.data_captured.connect(self.ball.trigger_clipboard_feedback)
+
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
         self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
