@@ -551,6 +551,8 @@ class MainWindow(QWidget):
         for item in items:
             display_text = self._get_content_display(item)
             list_item = QListWidgetItem(display_text)
+            if item.custom_color:
+                list_item.setIcon(self._create_color_icon(item.custom_color))
             list_item.setData(Qt.UserRole, item)
             if getattr(item, 'content', ''):
                 list_item.setToolTip(str(item.content)[:500])
@@ -558,14 +560,43 @@ class MainWindow(QWidget):
         if self.list_widget.count() > 0: self.list_widget.setCurrentRow(0)
 
     def _get_content_display(self, item):
+        # 状态图标
+        state_flags = ("📌" if item.is_pinned else "") + \
+                      ("⭐" if item.is_favorite else "") + \
+                      ("🔒" if item.is_locked else "")
+
+        # 类型图标
+        type_icon = self._get_type_icon(item)
+
+        # 拼接显示文本
+        display_text = f"{type_icon} {state_flags}".strip()
+
+        # 内容摘要
+        content_summary = ""
         if getattr(item, 'item_type', '') == 'file' and getattr(item, 'file_path', ''):
-            return os.path.basename(item.file_path)
+            content_summary = os.path.basename(item.file_path)
         elif getattr(item, 'item_type', '') == 'url' and getattr(item, 'url_domain', None):
-            return f"[{item.url_domain}] {item.url_title or ''}"
+            content_summary = f"[{item.url_domain}] {item.url_title or ''}"
         elif getattr(item, 'item_type', '') == 'image':
-            return "[图片] " + (os.path.basename(item.image_path) if getattr(item, 'image_path', None) else "")
+            content_summary = "[图片] " + (os.path.basename(item.image_path) if getattr(item, 'image_path', None) else f"{item.content.split(' ')[-1]}")
         else:
-            return getattr(item, 'content', '').replace('\n', ' ').replace('\r', '').strip()[:150]
+            content_summary = getattr(item, 'content', '').replace('\n', ' ').replace('\r', '').strip()[:150]
+
+        return f"{display_text} {content_summary}"
+
+    def _get_type_icon(self, item):
+        if item.item_type == 'url': return "🔗"
+        if item.item_type == 'image': return "🖼️"
+        if item.item_type == 'file' and item.file_path:
+            if os.path.exists(item.file_path):
+                if os.path.isdir(item.file_path): return "📂"
+                ext = os.path.splitext(item.file_path)[1].lower()
+                if ext in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma']: return "🎵"
+                if ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp']: return "🖼️"
+                if ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv']: return "🎬"
+                return "📄"
+            return "📄"
+        return "📝"
 
     def _create_color_icon(self, color_str):
         from PyQt5.QtGui import QPixmap, QPainter, QIcon
