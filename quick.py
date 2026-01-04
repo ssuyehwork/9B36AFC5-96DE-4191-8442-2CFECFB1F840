@@ -6,12 +6,15 @@ from ctypes import wintypes
 import time
 import datetime
 import subprocess
+from collections import deque
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
                              QAbstractItemView, QShortcut, QMenu)
-from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
+from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData, pyqtSignal
 from PyQt5.QtGui import QImage, QColor, QCursor, QKeySequence
+
+from core.shared import get_color_icon
 
 # Import the new dialog
 from ui.dialog_new_idea import NewIdeaDialog
@@ -163,6 +166,7 @@ QPushButton#PinButton:checked { background-color: #0078D4; color: white; border:
 
 class MainWindow(QWidget):
     RESIZE_MARGIN = 18 
+    request_show_main_window = pyqtSignal()
 
     def __init__(self, db_manager):
         super().__init__()
@@ -186,8 +190,13 @@ class MainWindow(QWidget):
         self.clipboard = QApplication.clipboard()
         self.clipboard.dataChanged.connect(self.on_clipboard_changed)
         self.cm.data_captured.connect(self._update_list)
-        self._processing_clipboard = False
-        
+
+        # 剪贴板队列 + 防抖
+        self._clipboard_queue = deque(maxlen=10)
+        self._clipboard_timer = QTimer(self)
+        self._clipboard_timer.setSingleShot(True)
+        self._clipboard_timer.timeout.connect(self._process_clipboard_queue)
+
         self._init_ui()
         self._setup_shortcuts()  # Bind shortcuts
         self._restore_window_state()
@@ -383,28 +392,9 @@ class MainWindow(QWidget):
 
     # --- Launch Main App Logic ---
     def _launch_main_app(self):
-        """创建并显示主数据管理窗口"""
-        try:
-            if self.main_window_instance and self.main_window_instance.isVisible():
-                self.main_window_instance.activateWindow()
-                self.main_window_instance.raise_()
-            else:
-                from ui.main_window import MainWindow
-                
-                # 创建并持有实例
-                self.main_window_instance = MainWindow()
-                self.main_window_instance.show()
-                
-                # 居中显示
-                screen_geo = QApplication.desktop().screenGeometry()
-                window_geo = self.main_window_instance.geometry()
-                self.main_window_instance.move(
-                    (screen_geo.width() - window_geo.width()) // 2,
-                    (screen_geo.height() - window_geo.height()) // 2
-                )
-
-        except Exception as e:
-            log(f"❌ 启动主窗口失败: {e}")
+        """发射信号请求显示主数据管理窗口"""
+        log("🚀 发射 'request_show_main_window' 信号")
+        self.request_show_main_window.emit()
 
     # --- Restore & Save State ---
     def _restore_window_state(self):
@@ -538,7 +528,7 @@ class MainWindow(QWidget):
                 elif partition_data['type'] != 'all':
                     partition_filter = partition_data
         # 1. 从数据库获取未经过滤的数据
-        all_items = self.db.get_items(partition_filter=partition_filter, date_modify_filter=date_modify_filter, limit=None)
+        all_items = self.db.get_items_detached(partition_filter=partition_filter, date_modify_filter=date_modify_filter, limit=None)
         
         # 2. 在内存中进行搜索过滤
         if search_text:
@@ -558,7 +548,7 @@ class MainWindow(QWidget):
             display_text = self._get_content_display(item)
             list_item = QListWidgetItem(display_text)
             if item.custom_color:
-                list_item.setIcon(self._create_color_icon(item.custom_color))
+                list_item.setIcon(get_color_icon(item.custom_color))
             list_item.setData(Qt.UserRole, item)
             if getattr(item, 'content', ''):
                 list_item.setToolTip(str(item.content)[:500])
@@ -603,18 +593,6 @@ class MainWindow(QWidget):
                 return "📄"
             return "📄"
         return "📝"
-
-    def _create_color_icon(self, color_str):
-        from PyQt5.QtGui import QPixmap, QPainter, QIcon
-        pixmap = QPixmap(16, 16)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QColor(color_str or "#808080"))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(2, 2, 12, 12, 4, 4)
-        painter.end()
-        return QIcon(pixmap)
 
     def _update_partition_tree(self):
         current_selection = self.partition_tree.currentItem().data(0, Qt.UserRole) if self.partition_tree.currentItem() else None
@@ -724,15 +702,28 @@ class MainWindow(QWidget):
             if attached: user32.AttachThreadInput(curr_thread, target_thread, False)
 
     def on_clipboard_changed(self):
-        if self._processing_clipboard:
+        """
+        剪贴板数据变化事件处理（防抖）。
+        """
+        mime_data = self.clipboard.mimeData()
+        self._clipboard_queue.append(mime_data)
+        self._clipboard_timer.start(200)
+
+    def _process_clipboard_queue(self):
+        """
+        定时器超时后处理剪贴板队列。
+        """
+        if not self._clipboard_queue:
             return
-        self._processing_clipboard = True
+
+        latest_mime_data = self._clipboard_queue[-1]
+        self._clipboard_queue.clear()
+
         try:
-            mime = self.clipboard.mimeData()
             # quick.py 默认不与特定分区关联，所以传入 None
-            self.cm.process_clipboard(mime, None)
-        finally:
-            self._processing_clipboard = False
+            self.cm.process_clipboard(latest_mime_data, None)
+        except Exception as e:
+            log(f"处理剪贴板队列失败: {e}")
 
     def keyPressEvent(self, event):
         key = event.key()
