@@ -564,20 +564,23 @@ class QuickWindow(QWidget):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            self.db.move_items_to_trash(unlocked_ids)
+            for iid in unlocked_ids:
+                self.db.set_deleted(iid, True)
             self._update_list()
             self._update_partition_tree()
 
     def _do_toggle_favorite(self):
         ids = self._get_selected_ids()
         if not ids: return
-        self.db.toggle_field_batch(ids, 'is_favorite')
+        for iid in ids:
+            self.db.toggle_field(iid, 'is_favorite')
         self._update_list()
 
     def _do_toggle_pin(self):
         ids = self._get_selected_ids()
         if not ids: return
-        self.db.toggle_field_batch(ids, 'is_pinned')
+        for iid in ids:
+            self.db.toggle_field(iid, 'is_pinned')
         self._update_list()
 
     def _handle_category_drop(self, idea_id, cat_id):

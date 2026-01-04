@@ -53,8 +53,8 @@ class AppController(QObject):
         self.quick_panel.cm.data_captured.connect(self.on_data_captured)
 
         # Connect ActionPopup signals
-        self.action_popup.request_favorite.connect(lambda item_id: self.db_manager.update_item(item_id, is_favorite=True))
-        self.action_popup.request_tag_add.connect(self.db_manager.add_tags_to_items)
+        self.action_popup.request_favorite.connect(lambda item_id: self.db_manager.set_favorite(item_id, True))
+        self.action_popup.request_tag_add.connect(lambda item_id, tag_names: self.db_manager.add_tags_to_multiple_ideas([item_id], tag_names))
         self.action_popup.request_manager.connect(self._launch_main_app)
 
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
