@@ -8,7 +8,8 @@ import datetime
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-                             QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel)
+                             QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
+                             QAbstractItemView, QMenu)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
 from PyQt5.QtGui import QImage, QColor, QCursor
 
