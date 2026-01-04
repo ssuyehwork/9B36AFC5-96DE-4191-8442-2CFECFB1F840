@@ -13,6 +13,7 @@ class FloatingBall(QWidget):
     request_show_main_window = pyqtSignal()
     request_quit_app = pyqtSignal()
     double_clicked = pyqtSignal()
+    request_show_tag_manager = pyqtSignal()
 
     # --- 皮肤枚举 ---
     SKIN_MOCHA = 0   # 摩卡·勃艮第 (最新款)
@@ -416,6 +417,7 @@ class FloatingBall(QWidget):
         m.addAction('📝  快速笔记', self.request_show_quick_window.emit)
         m.addAction('🗂️  打开主界面', self.request_show_main_window.emit)
         m.addAction('✨  新建灵感', self.mw.new_idea)
+        m.addAction('🏷️  管理常用标签', self.request_show_tag_manager.emit)
         m.addSeparator()
         m.addAction('🚪  退出', self.request_quit_app.emit)
         

@@ -34,6 +34,7 @@ class AppController(QObject):
         from ui.ball import FloatingBall
         from ui.tray_manager import TrayManager
         from ui.action_popup import ActionPopup
+        from ui.common_tags_manager import CommonTagsManager
         
         self.db_manager = DBManager()
         self.quick_panel = QuickPanelWindow(db_manager=self.db_manager)
@@ -60,6 +61,7 @@ class AppController(QObject):
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
         self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
+        self.ball.request_show_tag_manager.connect(self._show_common_tags_manager)
         self.ball.request_quit_app.connect(self.app.quit)
         
         self.tray.request_show_quick_panel.connect(self.toggle_quick_panel)
@@ -83,6 +85,12 @@ class AppController(QObject):
         """当剪贴板捕获到新数据时，显示快捷操作条"""
         if is_new and item:
             self.action_popup.show_at_mouse(item.id)
+
+    def _show_common_tags_manager(self):
+        """显示常用标签管理对话框"""
+        # 实例化并以模态方式执行对话框
+        dialog = CommonTagsManager(self.quick_panel)
+        dialog.exec_()
 
 def main():
     log.info("🚀 启动印象记忆_Pro...")
