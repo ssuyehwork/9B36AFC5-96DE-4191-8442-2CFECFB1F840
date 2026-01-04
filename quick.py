@@ -9,12 +9,14 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
-                             QAbstractItemView, QShortcut)
+                             QAbstractItemView, QShortcut, QMenu)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
 from PyQt5.QtGui import QImage, QColor, QCursor, QKeySequence
 
 # Import the new dialog
 from ui.dialog_new_idea import NewIdeaDialog
+from ui.dialog_preview import PreviewDialog
+from ui.color_selector import ColorSelectorDialog
 
 # =================================================================================
 #   Win32 API 定义
@@ -159,6 +161,7 @@ class MainWindow(QWidget):
         self.last_thread_id = None
         self.my_hwnd = None
         self.main_window_instance = None # 持有主窗口实例
+        self.preview_dlg = None
         
         # --- Clipboard Manager ---
         self.cm = ClipboardManager(self.db)
@@ -170,6 +173,8 @@ class MainWindow(QWidget):
         self._init_ui()
         self._setup_shortcuts()  # Bind shortcuts
         self._restore_window_state()
+
+        self.list_widget.installEventFilter(self)
         
         self.setMouseTracking(True)
         self.container.setMouseTracking(True)
@@ -684,24 +689,33 @@ class MainWindow(QWidget):
         else: super().keyPressEvent(event)
 
     def _show_list_context_menu(self, pos):
-        """Build and show the enhanced context menu."""
+        """Build and show the complete context menu."""
         selected_items = self.list_widget.selectedItems()
         if not selected_items:
             return
 
         menu = QMenu(self)
         
-        # Single-item actions
         if len(selected_items) == 1:
             item_data = selected_items[0].data(Qt.UserRole)
-            menu.addAction("👁️ 预览 (Space)", self._do_preview)
+            menu.addAction("👁️ 预览 (Space)", self.toggle_preview)
             menu.addAction("📋 复制内容", lambda: self._copy_item_content(item_data))
             menu.addSeparator()
 
         # Batch actions
-        menu.addAction("⭐ 收藏选中项", self._do_batch_toggle_favorite)
-        menu.addAction("📌 置顶选中项", self._do_batch_toggle_pin)
-        menu.addAction("🔒 锁定/解锁选中项", self._do_batch_toggle_lock)
+        menu.addAction("⭐ 收藏 (Ctrl+E)", self._do_batch_toggle_favorite)
+        menu.addAction("📌 置顶", self._do_batch_toggle_pin)
+        menu.addAction("🔒 锁定 (Ctrl+S)", self._do_batch_toggle_lock)
+        menu.addSeparator()
+
+        # Star rating submenu
+        star_menu = menu.addMenu("⭐ 设置星级")
+        for i in range(6):
+            star_action = star_menu.addAction(f"设置为 {i} 星 (Ctrl+{i})")
+            star_action.triggered.connect(lambda _, level=i: self.batch_set_star(level))
+
+        # Color submenu
+        menu.addAction("🎨 设置颜色", self.set_custom_color)
         
         # Move to partition submenu
         move_menu = menu.addMenu("📂 移动到...")
@@ -709,7 +723,7 @@ class MainWindow(QWidget):
         self._add_partitions_to_menu(partitions, move_menu)
         
         menu.addSeparator()
-        menu.addAction("🗑️ 删除选中项 (Del)", self._do_batch_delete)
+        menu.addAction("🗑️ 删除 (Del)", self.smart_delete)
 
         menu.exec_(self.list_widget.mapToGlobal(pos))
 
@@ -725,20 +739,11 @@ class MainWindow(QWidget):
 
     def _move_selection_to_partition(self, partition_id):
         """Move selected items to a specific partition."""
-        ids = self._get_selected_ids()
+        ids, _ = self._get_selected_ids_and_items()
         if not ids: return
-        deletable_ids = [id for id in ids if not self.db.get_idea(id).is_locked]
-        if not deletable_ids: return
-        for id in deletable_ids:
-            self.db.move_category(id, partition_id)
+        self.db.move_items_to_partition(ids, partition_id)
         self._update_list()
         self._update_partition_tree()
-
-    def _do_preview(self):
-        """Preview the currently selected item."""
-        if len(self.list_widget.selectedItems()) == 1:
-            # Assuming a preview service exists, similar to main_window
-            pass
 
     def _copy_item_content(self, item_data):
         """Copy content of a single item to clipboard."""
@@ -748,60 +753,61 @@ class MainWindow(QWidget):
 
 
     # --- Batch Operation Methods ---
-    def _get_selected_ids(self):
-        """Helper to get all selected item IDs."""
-        selected_items = self.list_widget.selectedItems()
-        return [item.data(Qt.UserRole).id for item in selected_items if item.data(Qt.UserRole)]
+    def _get_selected_ids_and_items(self):
+        """Helper to get all selected item IDs and their data."""
+        selected_widgets = self.list_widget.selectedItems()
+        if not selected_widgets:
+            return [], []
+
+        ids = [item.data(Qt.UserRole).id for item in selected_widgets if item.data(Qt.UserRole)]
+        items = [item.data(Qt.UserRole) for item in selected_widgets if item.data(Qt.UserRole)]
+        return ids, items
 
     def _do_batch_toggle_favorite(self):
         """Batch toggle favorite status for selected items."""
-        ids = self._get_selected_ids()
+        ids, items = self._get_selected_ids_and_items()
         if not ids: return
-        # A simple toggle: if any are not favorite, make all favorite. Otherwise, unfavorite all.
-        is_favorite = any(not self.db.get_idea(id).is_favorite for id in ids)
+
+        is_favorite = any(not item.is_favorite for item in items)
         for id in ids:
-            self.db.set_favorite(id, is_favorite)
+            self.db.update_item(id, is_favorite=is_favorite)
         self._update_list()
 
     def _do_batch_toggle_pin(self):
         """Batch toggle pin status for selected items."""
-        ids = self._get_selected_ids()
+        ids, items = self._get_selected_ids_and_items()
         if not ids: return
-        is_pinned = any(not self.db.get_idea(id).is_pinned for id in ids)
+        is_pinned = any(not item.is_pinned for item in items)
         for id in ids:
-            self.db.toggle_field(id, 'is_pinned') # Assuming toggle_field handles this
+            self.db.update_item(id, is_pinned=is_pinned)
         self._update_list()
 
     def _do_batch_toggle_lock(self):
         """Batch toggle lock status for selected items."""
-        ids = self._get_selected_ids()
+        ids, items = self._get_selected_ids_and_items()
         if not ids: return
-        # If any are unlocked, lock all. Otherwise, unlock all.
-        is_locked = any(not self.db.get_idea(id).is_locked for id in ids)
+        is_locked = any(not item.is_locked for item in items)
         for id in ids:
-            self.db.set_locked([id], is_locked)
+            self.db.update_item(id, is_locked=is_locked)
         self._update_list()
-
-    def _do_batch_delete(self):
-        """Batch move selected items to trash."""
-        ids = self._get_selected_ids()
-        if not ids: return
-        # Filter out locked items
-        deletable_ids = [id for id in ids if not self.db.get_idea(id).is_locked]
-        if not deletable_ids: return
-        for id in deletable_ids:
-            self.db.set_deleted(id, True)
-        self._update_list()
-        self._update_partition_tree()
 
     def _setup_shortcuts(self):
         """Setup global shortcuts for the window."""
         QShortcut(QKeySequence("Ctrl+E"), self, self._do_batch_toggle_favorite)
         QShortcut(QKeySequence("Ctrl+S"), self, self._do_batch_toggle_lock)
-        QShortcut(QKeySequence("Del"), self, self._do_batch_delete)
+        QShortcut(QKeySequence("Del"), self, self.smart_delete)
         QShortcut(QKeySequence("Ctrl+A"), self, self.list_widget.selectAll)
-        # Assuming a preview function exists or will be added
-        # QShortcut(QKeySequence(Qt.Key_Space), self, self._do_preview)
+        QShortcut(QKeySequence(Qt.Key_Space), self, self.toggle_preview)
+
+        for i in range(6):
+            QShortcut(QKeySequence(f"Ctrl+{i}"), self).activated.connect(lambda l=i: self.batch_set_star(l))
+
+    def eventFilter(self, source, event):
+        if source == self.list_widget and event.type() == event.KeyPress:
+            if event.key() == Qt.Key_Space:
+                self.toggle_preview()
+                return True
+        return super().eventFilter(source, event)
 
     def _add_debug_test_item(self):
         """仅在数据库为空时，用于填充一些示例数据"""
@@ -810,3 +816,59 @@ class MainWindow(QWidget):
             mock_data = type('obj', (object,), {'item_type': 'text', 'content': f'Content {i}'})
             item.setData(Qt.UserRole, mock_data)
             self.list_widget.addItem(item)
+
+    def toggle_preview(self):
+        if self.preview_dlg and self.preview_dlg.isVisible():
+            self.preview_dlg.close()
+            return
+
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        try:
+            item = selected_items[0].data(Qt.UserRole)
+            if item:
+                if not self.preview_dlg:
+                    self.preview_dlg = PreviewDialog(self)
+
+                self.preview_dlg.load_data(item.content, item.item_type, item.file_path, item.image_path, item.data_blob)
+                self.preview_dlg.show()
+                self.preview_dlg.raise_()
+                self.preview_dlg.activateWindow()
+        except Exception as e:
+            log(f"预览失败: {e}")
+
+    def smart_delete(self):
+        ids, items = self._get_selected_ids_and_items()
+        if not ids: return
+
+        deletable_ids = [item.id for item in items if not item.is_favorite and not item.is_locked]
+        skipped_count = len(ids) - len(deletable_ids)
+
+        if not deletable_ids:
+            # You might want to show a status message here
+            return
+
+        # In quick panel, we always move to trash without confirmation for speed.
+        self.db.move_items_to_trash(deletable_ids)
+        self._update_list()
+        self._update_partition_tree()
+
+    def batch_set_star(self, star_level):
+        ids, _ = self._get_selected_ids_and_items()
+        if not ids: return
+        for id in ids:
+            self.db.update_item(id, star_level=star_level)
+        self._update_list()
+
+    def set_custom_color(self):
+        ids, _ = self._get_selected_ids_and_items()
+        if not ids: return
+
+        dlg = ColorSelectorDialog(self)
+        if dlg.exec_():
+            color = dlg.selected_color or ""
+            for id in ids:
+                self.db.update_item(id, custom_color=color)
+            self._update_list()
