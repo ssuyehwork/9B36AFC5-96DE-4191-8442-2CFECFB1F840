@@ -561,7 +561,7 @@ class MainWindow(QMainWindow):
         finally:
             self._processing_clipboard = False
 
-    def refresh_after_capture(self):
+    def refresh_after_capture(self, item=None):
         QTimer.singleShot(0, self.load_data)
         QTimer.singleShot(0, self.partition_panel.refresh_partitions)
 

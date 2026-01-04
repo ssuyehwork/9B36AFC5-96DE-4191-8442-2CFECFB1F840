@@ -44,7 +44,7 @@ class FloatingBall(QWidget):
         self.timer.timeout.connect(self._update_physics)
         self.timer.start(16) # ~60FPS
 
-    def trigger_clipboard_feedback(self):
+    def trigger_clipboard_feedback(self, item=None):
         """公共方法：触发剪贴板成功反馈特效"""
         self.is_clipboard_active = True
         self.clipboard_timer_count = 0  # 重置计数器，特效持续约2秒 (120帧)

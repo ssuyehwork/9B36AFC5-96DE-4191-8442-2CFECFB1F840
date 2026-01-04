@@ -33,9 +33,11 @@ class AppController(QObject):
         from quick import MainWindow as QuickPanelWindow
         from ui.ball import FloatingBall
         from ui.tray_manager import TrayManager
+        from ui.action_popup import ActionPopup
         
         self.db_manager = DBManager()
         self.quick_panel = QuickPanelWindow(db_manager=self.db_manager)
+        self.action_popup = ActionPopup()
         self.ball = FloatingBall(main_window=self.quick_panel)
         self.tray = TrayManager()
         
@@ -48,6 +50,11 @@ class AppController(QObject):
     def _connect_signals(self):
         # Connect clipboard capture signal to ball's feedback animation
         self.quick_panel.cm.data_captured.connect(self.ball.trigger_clipboard_feedback)
+        self.quick_panel.cm.data_captured.connect(self.on_data_captured)
+
+        # Connect action popup signals
+        self.action_popup.request_favorite.connect(self.on_request_favorite)
+        self.action_popup.request_tag_add.connect(self.on_request_tag_add)
 
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
@@ -70,6 +77,16 @@ class AppController(QObject):
         self.quick_panel.show()
         self.quick_panel.activateWindow()
         self.quick_panel.raise_()
+
+    def on_data_captured(self, item):
+        if item and hasattr(item, 'id'):
+            self.action_popup.show_at_mouse(item.id)
+
+    def on_request_favorite(self, item_id):
+        self.db_manager.update_item(item_id, is_favorite=True)
+
+    def on_request_tag_add(self, item_id, tag_name):
+        self.db_manager.add_tags_to_items([item_id], [tag_name])
 
 def main():
     log.info("🚀 启动印象记忆_Pro...")
