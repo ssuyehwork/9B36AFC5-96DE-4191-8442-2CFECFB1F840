@@ -2,7 +2,7 @@
 # ui/ball.py
 import math
 import random
-from PyQt5.QtWidgets import QWidget, QMenu
+from PyQt5.QtWidgets import QWidget, QMenu, QApplication
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QRectF
 from PyQt5.QtGui import (QPainter, QColor, QPen, QBrush, 
                          QLinearGradient, QPainterPath, QPolygonF)
@@ -51,7 +51,19 @@ class FloatingBall(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_physics)
-        self.timer.start(16) 
+        self.timer.start(16)
+
+        self._restore_position()
+
+    def _restore_position(self):
+        """恢复悬浮球的位置"""
+        pos_data = load_setting('floating_ball_pos')
+        if isinstance(pos_data, dict) and 'x' in pos_data and 'y' in pos_data:
+            self.move(QPoint(pos_data['x'], pos_data['y']))
+        else:
+            # 默认位置：屏幕右上角
+            screen_rect = QApplication.desktop().screenGeometry()
+            self.move(screen_rect.width() - self.width() - 50, 100)
 
     def trigger_clipboard_feedback(self):
         """触发记录成功特效"""
