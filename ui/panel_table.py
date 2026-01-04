@@ -2,6 +2,7 @@
 import os
 from PyQt5.QtWidgets import QTableWidget, QAbstractItemView, QHeaderView, QTableWidgetItem
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QFont, QColor, QLinearGradient, QPen, QPainterPath
 from core.shared import get_color_icon, format_size
 
 class TablePanel(QTableWidget):
@@ -89,8 +90,6 @@ class TablePanel(QTableWidget):
         QSettings("ClipboardPro", "Settings").setValue("table_font_size", size)
 
     def startDrag(self, supportedActions):
-        from PyQt5.QtWidgets import QDrag
-        from PyQt5.QtGui import QPixmap, QPainter, QFont, QColor
         from PyQt5.QtCore import QPoint
 
         selected_rows = self.selectionModel().selectedRows()
@@ -129,7 +128,6 @@ class TablePanel(QTableWidget):
 
     def _create_drag_pixmap(self, selected_rows):
         """根据选中的行创建拖拽预览图"""
-        from PyQt5.QtGui import QPixmap, QPainter, QFont, QColor, QLinearGradient
         from PyQt5.QtCore import QRect, QRectF
 
         # 基础尺寸和样式

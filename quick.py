@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QL
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
                              QAbstractItemView, QShortcut, QMenu)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData, pyqtSignal
-from PyQt5.QtGui import QImage, QColor, QCursor, QKeySequence
+from PyQt5.QtGui import QImage, QColor, QCursor, QKeySequence, QDrag
 
 from core.shared import get_color_icon
 
@@ -166,8 +166,6 @@ QPushButton#PinButton:checked { background-color: #0078D4; color: white; border:
 
 class DraggableListWidget(QListWidget):
     def startDrag(self, supportedActions):
-        from PyQt5.QtWidgets import QDrag
-
         drag = QDrag(self)
         mime_data = self.mimeData(self.selectedItems())
         drag.setMimeData(mime_data)
