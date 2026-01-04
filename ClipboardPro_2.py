@@ -61,7 +61,7 @@ class AppController(QObject):
         # Connect ActionPopup signals
         self.action_popup.request_favorite.connect(lambda item_id: self.db_manager.update_item(item_id, is_favorite=True))
         self.action_popup.request_tag_add.connect(self.db_manager.add_tags_to_items)
-        self.action_popup.request_manager.connect(self._show_main_window)
+        self.action_popup.request_manager.connect(self._show_common_tags_manager)
 
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
