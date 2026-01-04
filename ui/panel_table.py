@@ -88,6 +88,94 @@ class TablePanel(QTableWidget):
         from PyQt5.QtCore import QSettings
         QSettings("ClipboardPro", "Settings").setValue("table_font_size", size)
 
+    def startDrag(self, supportedActions):
+        from PyQt5.QtWidgets import QDrag
+        from PyQt5.QtGui import QPixmap, QPainter, QFont, QColor
+        from PyQt5.QtCore import QPoint
+
+        selected_rows = self.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        drag = QDrag(self)
+        mime = self.mimeData(self.selectedIndexes())
+        drag.setMimeData(mime)
+
+        # 创建自定义预览图
+        pixmap = self._create_drag_pixmap(selected_rows)
+        drag.setPixmap(pixmap)
+
+        # 设置热点为左下角
+        drag.setHotSpot(pixmap.rect().bottomLeft())
+
+        drag.exec_(supportedActions)
+
+    def _create_drag_pixmap(self, selected_rows):
+        """根据选中的行创建拖拽预览图"""
+        from PyQt5.QtGui import QPixmap, QPainter, QFont, QColor, QLinearGradient
+        from PyQt5.QtCore import QRect, QRectF
+
+        # 基础尺寸和样式
+        width, height = 300, 60
+        font_name = "Microsoft YaHei"
+        base_font_size = 9
+
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+
+        p = QPainter(pixmap)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        # 背景
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.5, 0.5, width-1, height-1), 8, 8)
+
+        grad = QLinearGradient(0, 0, 0, height)
+        grad.setColorAt(0, QColor(60, 60, 65))
+        grad.setColorAt(1, QColor(40, 40, 45))
+
+        p.setPen(QPen(QColor(100, 100, 100), 1))
+        p.fillPath(path, grad)
+        p.drawPath(path)
+
+        # 获取第一行的数据
+        first_row = selected_rows[0].row()
+        icon_item = self.item(first_row, 0)
+        content_item = self.item(first_row, 1)
+        note_item = self.item(first_row, 2)
+
+        # 绘制图标和状态
+        if icon_item:
+            icon_pixmap = icon_item.icon().pixmap(18, 18)
+            p.drawPixmap(10, 10, icon_pixmap)
+            p.setFont(QFont(font_name, base_font_size + 2))
+            p.setPen(QColor(220, 220, 220))
+            p.drawText(QRect(35, 10, 30, 20), Qt.AlignLeft | Qt.AlignVCenter, icon_item.text())
+
+        # 绘制内容
+        if content_item:
+            p.setFont(QFont(font_name, base_font_size, QFont.Bold))
+            p.setPen(QColor(240, 240, 240))
+            p.drawText(QRect(10, 30, width - 20, 15), Qt.AlignLeft | Qt.AlignVCenter, content_item.text())
+
+        # 绘制备注
+        if note_item:
+            p.setFont(QFont(font_name, base_font_size))
+            p.setPen(QColor(180, 180, 180))
+            p.drawText(QRect(10, 45, width - 20, 15), Qt.AlignLeft | Qt.AlignVCenter, note_item.text())
+
+        # 绘制角标
+        if len(selected_rows) > 1:
+            p.setFont(QFont(font_name, 8, QFont.Bold))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 120, 215))
+            p.drawRoundedRect(width-32, height-20, 28, 16, 8, 8)
+            p.setPen(Qt.white)
+            p.drawText(QRect(width-32, height-20, 28, 16), Qt.AlignCenter, f"+{len(selected_rows)}")
+
+        p.end()
+        return pixmap
+
     def dropEvent(self, event):
         if event.source() != self: 
             super().dropEvent(event)
