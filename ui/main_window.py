@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self.table.reorder_signal.connect(self.reorder_items)
         self.dock_container.setCentralWidget(self.table)
         
+        # Hide the detail panel by default as requested
+        self.dock_detail.hide()
+        
         self.filter_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.partition_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tag_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -476,9 +479,9 @@ class MainWindow(QMainWindow):
         if curr_geo.height() > screen_geo.height() or curr_geo.top() < 0 or curr_geo.left() < 0:
              log.warning("⚠️ 检测到窗口尺寸异常，正在重置为安全尺寸...")
              init_w = min(1200, int(screen_geo.width() * 0.9))
-             init_h = min(700, int(screen_geo.height() * 0.9))
+             init_h = min(700, int(screen_h * 0.9))
              self.resize(init_w, init_h)
-             self.move((screen_geo.width() - init_w) // 2, (screen_geo.height() - init_h) // 2)
+             self.move((screen_w - init_w) // 2, (screen_h - init_h) // 2)
 
         if ws := s.value("windowState"):
             self.dock_container.restoreState(ws)
@@ -499,8 +502,8 @@ class MainWindow(QMainWindow):
         if hasattr(self.title_bar, 'btn_pin'):
             self.title_bar.btn_pin.setChecked(self.is_pinned)
 
+        # Allow restoreState to handle visibility; do not force show all docks.
         for dock in [self.dock_filter, self.dock_partition, self.dock_tags, self.dock_detail]:
-            dock.setVisible(True)
             dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         
         self.edit_mode = s.value("editMode", False, type=bool)
@@ -719,6 +722,8 @@ class MainWindow(QMainWindow):
         
         log.info(f"✅ 前端过滤完成: 显示 {visible_count}/{len(self.cached_items)} 行")
         
+        # Correct Logic: Stats should be calculated from all items on the page
+        # to prevent filter options from disappearing when a filter is applied.
         stats = self._calculate_stats_from_items(self.cached_items)
         self.filter_panel.update_stats(stats)
         
