@@ -479,9 +479,9 @@ class MainWindow(QMainWindow):
         if curr_geo.height() > screen_geo.height() or curr_geo.top() < 0 or curr_geo.left() < 0:
              log.warning("⚠️ 检测到窗口尺寸异常，正在重置为安全尺寸...")
              init_w = min(1200, int(screen_geo.width() * 0.9))
-             init_h = min(700, int(screen_geo.height() * 0.9))
+             init_h = min(700, int(screen_h * 0.9))
              self.resize(init_w, init_h)
-             self.move((screen_geo.width() - init_w) // 2, (screen_geo.height() - init_h) // 2)
+             self.move((screen_w - init_w) // 2, (screen_h - init_h) // 2)
 
         if ws := s.value("windowState"):
             self.dock_container.restoreState(ws)
@@ -722,17 +722,9 @@ class MainWindow(QMainWindow):
 
         log.info(f"✅ 前端过滤完成: 显示 {visible_count}/{len(self.cached_items)} 行")
 
-        # Bug Fix: Calculate stats based on VISIBLE items, not all cached items.
-        visible_items = []
-        for row in range(self.table.rowCount()):
-            if not self.table.isRowHidden(row):
-                id_item = self.table.item(row, 8)
-                if id_item and id_item.text():
-                    item = self.cached_items_map.get(int(id_item.text()))
-                    if item:
-                        visible_items.append(item)
-
-        stats = self._calculate_stats_from_items(visible_items)
+        # Correct Logic: Stats should be calculated from all items on the page
+        # to prevent filter options from disappearing when a filter is applied.
+        stats = self._calculate_stats_from_items(self.cached_items)
         self.filter_panel.update_stats(stats)
 
         self.lbl_status.setText(f"总计: {self.total_items} 条 | 当前页: {len(self.cached_items)} 条 | 显示: {visible_count} 条")
