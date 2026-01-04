@@ -637,7 +637,7 @@ class MainWindow(QWidget):
             count = partition_counts.get(partition.id, 0)
             item = QTreeWidgetItem(parent_item, [f"{partition.name} ({count})"])
             item.setData(0, Qt.UserRole, {'type': 'partition', 'id': partition.id, 'color': partition.color})
-            item.setIcon(0, self._create_color_icon(partition.color))
+            item.setIcon(0, get_color_icon(partition.color))
             
             if partition.children:
                 self._add_partition_recursive(partition.children, item, partition_counts)
