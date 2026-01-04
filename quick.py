@@ -9,9 +9,9 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
-                             QAbstractItemView)
+                             QAbstractItemView, QShortcut)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
-from PyQt5.QtGui import QImage, QColor, QCursor
+from PyQt5.QtGui import QImage, QColor, QCursor, QKeySequence
 
 # Import the new dialog
 from ui.dialog_new_idea import NewIdeaDialog
