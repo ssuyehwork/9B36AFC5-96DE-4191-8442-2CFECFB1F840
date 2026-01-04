@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import logging
+# -*- coding: utf-8 -*-
 import logging
 import ctypes
 import os
 from ctypes.wintypes import MSG
 from datetime import datetime, time, timedelta
+from collections import deque
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QDockWidget, QLabel, QPushButton, QFrame, 

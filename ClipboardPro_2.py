@@ -2,9 +2,20 @@
 import sys
 import logging
 import traceback
+import sys
+import logging
+import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QObject
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
+
+# 组件导入
+from data.database import DBManager
+from quick import MainWindow as QuickPanelWindow
+from ui.ball import FloatingBall
+from ui.tray_manager import TrayManager
+from ui.action_popup import ActionPopup
+from ui.common_tags_manager import CommonTagsManager
 
 # === 配置日志 ===
 log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', datefmt='%H:%M:%S')
@@ -28,13 +39,6 @@ class AppController(QObject):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        
-        from data.database import DBManager
-        from quick import MainWindow as QuickPanelWindow
-        from ui.ball import FloatingBall
-        from ui.tray_manager import TrayManager
-        from ui.action_popup import ActionPopup
-        from ui.common_tags_manager import CommonTagsManager
         
         self.db_manager = DBManager()
         self.quick_panel = QuickPanelWindow(db_manager=self.db_manager)
