@@ -2,70 +2,11 @@
 # ui/action_popup.py
 
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QGraphicsDropShadowEffect
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QSize, QPropertyAnimation, pyqtProperty, QEasingCurve
-from PyQt5.QtGui import QCursor, QColor, QPainter, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QSize
+from PyQt5.QtGui import QCursor, QColor
 from core.config import COLORS
 from ui.common_tags import CommonTags
-
-class AnimatedTick(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(24, 24)
-        self._progress = 0.0
-        self.animation = QPropertyAnimation(self, b"progress", self)
-        self.animation.setDuration(600)
-        self.animation.setEasingCurve(QEasingCurve.OutBounce)
-
-    @pyqtProperty(float)
-    def progress(self):
-        return self._progress
-
-    @progress.setter
-    def progress(self, value):
-        self._progress = value
-        self.update()
-
-    def start_animation(self):
-        self.animation.stop()
-        self.animation.setStartValue(0.0)
-        self.animation.setEndValue(1.0)
-        self.animation.start()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Draw green circle background
-        if self._progress > 0:
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(QColor("#28a745")))
-            radius = self.width() / 2 * min(1.0, self._progress * 2)
-            painter.drawEllipse(self.rect().center(), radius, radius)
-
-        # Draw tick
-        if self._progress > 0.5:
-            pen = QPen(Qt.white, 2)
-            pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(pen)
-            
-            tick_progress = (self._progress - 0.5) * 2
-            
-            # First part of the tick
-            p1 = QPoint(int(self.width() * 0.25), int(self.height() * 0.5))
-            p2 = QPoint(int(self.width() * 0.45), int(self.height() * 0.7))
-            
-            if tick_progress <= 0.5:
-                # Draw from p1 towards p2
-                interp_p = p1 + (p2 - p1) * (tick_progress * 2)
-                painter.drawLine(p1, interp_p)
-            else:
-                # Draw full line from p1 to p2, then start second part
-                painter.drawLine(p1, p2)
-                
-                p3 = QPoint(int(self.width() * 0.75), int(self.height() * 0.3))
-                second_part_progress = (tick_progress - 0.5) * 2
-                interp_p = p2 + (p3 - p2) * second_part_progress
-                painter.drawLine(p2, interp_p)
+from ui.success_animation import SuccessAnimationWidget
 
 class ActionPopup(QWidget):
     """
@@ -104,8 +45,8 @@ class ActionPopup(QWidget):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(10)
         
-        self.tick_animation = AnimatedTick()
-        layout.addWidget(self.tick_animation)
+        self.success_animation = SuccessAnimationWidget()
+        layout.addWidget(self.success_animation)
         
         line = QLabel("|")
         line.setStyleSheet("color: #555; border:none; background: transparent;")
@@ -147,7 +88,8 @@ class ActionPopup(QWidget):
     def show_at_mouse(self, idea_id):
         self.current_idea_id = idea_id
         self.common_tags_bar.reload_tags()
-        self.tick_animation.start_animation()
+        
+        self.success_animation.start()
         
         self.btn_fav.setText("⭐")
         self.btn_fav.setStyleSheet(f"QPushButton {{ background: transparent; color: #BBB; border: none; font-size: 14px; }} QPushButton:hover {{ color: {COLORS['warning']}; }}")

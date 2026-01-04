@@ -62,6 +62,7 @@ class ClipboardItem(Base):
     item_type = Column(String(20), default='text')
     image_path = Column(Text, default=None)
     data_blob = Column(BLOB, nullable=True)
+    thumbnail_blob = Column(BLOB, nullable=True)
     partition_id = Column(Integer, ForeignKey('partitions.id'), nullable=True)
     original_partition_id = Column(Integer, nullable=True)
     partition = relationship("Partition", back_populates="items")
@@ -162,7 +163,7 @@ class DBManager:
     def get_session(self):
         return self.Session()
 
-    def add_item(self, text, is_file=False, file_path=None, item_type='text', image_path=None, partition_id=None, data_blob=None):
+    def add_item(self, text, is_file=False, file_path=None, item_type='text', image_path=None, partition_id=None, data_blob=None, thumbnail_blob=None):
         session = self.get_session()
         try:
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
@@ -183,7 +184,7 @@ class DBManager:
             new_item = ClipboardItem(
                 content=text, content_hash=text_hash, sort_index=new_sort, note=note_txt,
                 is_file=is_file, file_path=file_path, item_type=item_type, image_path=image_path,
-                partition_id=partition_id, data_blob=data_blob
+                partition_id=partition_id, data_blob=data_blob, thumbnail_blob=thumbnail_blob
             )
             session.add(new_item)
             try:
