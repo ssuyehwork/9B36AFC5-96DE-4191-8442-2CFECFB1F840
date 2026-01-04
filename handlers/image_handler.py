@@ -56,13 +56,12 @@ class ImageHandler(BaseHandler):
 
             partition_id = partition_info.get('id') if partition_info and partition_info.get('type') == 'partition' else None
             
-            item, is_new = db_manager.add_item(
-                text=f"[图片] {qimage.width()}x{qimage.height()}",
+            # 使用新的数据库方法 add_clipboard_item
+            item, is_new = db_manager.add_clipboard_item(
                 item_type='image',
-                is_file=False,
+                content='[Image Data]',  # content 字段现在只是一个占位符
                 data_blob=image_blob,
-                thumbnail_blob=thumbnail_blob,
-                partition_id=partition_id
+                category_id=partition_id
             )
             
             if is_new:

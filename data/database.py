@@ -1,598 +1,577 @@
 # -*- coding: utf-8 -*-
-import sys
-import os
+# data/db_manager.py
+import sqlite3
 import hashlib
-import logging
-from datetime import datetime, timedelta, time
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, Index, Float, func, or_, exists, and_, BLOB
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker, joinedload
+import os
+import random
+from core.config import DB_NAME, COLORS
 
-log = logging.getLogger("Database")
-Base = declarative_base()
+class DatabaseManager:
+    def __init__(self):
+        self.conn = sqlite3.connect(DB_NAME)
+        self._init_schema()
+        # 【维护】启动时仅修正回收站数据的格式
+        self._fix_trash_consistency()
 
-item_tags = Table(
-    'item_tags', Base.metadata,
-    Column('item_id', Integer, ForeignKey('clipboard_items.id'), primary_key=True),
-    Column('tag_id', Integer, ForeignKey('tags.id'), primary_key=True),
-    Index('idx_tag_item', 'tag_id', 'item_id')
-)
+    def _init_schema(self):
+        c = self.conn.cursor()
 
-partition_tags = Table(
-    'partition_tags', Base.metadata,
-    Column('partition_id', Integer, ForeignKey('partitions.id'), primary_key=True),
-    Column('tag_id', Integer, ForeignKey('tags.id'), primary_key=True)
-)
+        c.execute(f'''CREATE TABLE IF NOT EXISTS ideas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL, content TEXT, color TEXT DEFAULT '{COLORS['default_note']}',
+            is_pinned INTEGER DEFAULT 0, is_favorite INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            category_id INTEGER, is_deleted INTEGER DEFAULT 0
+        )''')
+        c.execute('CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)')
+        c.execute('''CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            parent_id INTEGER,
+            color TEXT DEFAULT "#808080",
+            sort_order INTEGER DEFAULT 0
+        )''')
+        c.execute('CREATE TABLE IF NOT EXISTS idea_tags (idea_id INTEGER, tag_id INTEGER, PRIMARY KEY (idea_id, tag_id))')
 
-class Partition(Base):
-    __tablename__ = 'partitions'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(50), nullable=False)
-    color = Column(String(20), default=None)
-    sort_index = Column(Float, default=0.0)
-    parent_id = Column(Integer, ForeignKey('partitions.id'), nullable=True)
-    parent = relationship("Partition", remote_side=[id], back_populates="children")
-    children = relationship("Partition", back_populates="parent", cascade="all, delete-orphan", order_by="Partition.sort_index")
-    tags = relationship("Tag", secondary=partition_tags, back_populates="partitions")
-    items = relationship(
-        "ClipboardItem", 
-        primaryjoin="and_(Partition.id==ClipboardItem.partition_id, ClipboardItem.is_deleted != True)",
-        back_populates="partition", 
-        order_by="ClipboardItem.sort_index"
-    )
+        # 检查并补充字段
+        c.execute("PRAGMA table_info(ideas)")
+        cols = [i[1] for i in c.fetchall()]
 
-class ClipboardItem(Base):
-    __tablename__ = 'clipboard_items'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    content = Column(Text, nullable=False)
-    content_hash = Column(String(64), index=True, unique=True)
-    note = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.now)
-    modified_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-    last_visited_at = Column(DateTime, default=datetime.now)
-    visit_count = Column(Integer, default=0)
-    sort_index = Column(Float, default=0.0)
-    star_level = Column(Integer, default=0) 
-    is_favorite = Column(Boolean, default=False)
-    is_locked = Column(Boolean, default=False)
-    is_pinned = Column(Boolean, default=False)
-    is_deleted = Column(Boolean, default=False, index=True)
-    custom_color = Column(String(20), default=None)
-    is_file = Column(Boolean, default=False)
-    file_path = Column(Text, default=None)
-    item_type = Column(String(20), default='text')
-    image_path = Column(Text, default=None)
-    data_blob = Column(BLOB, nullable=True)
-    thumbnail_blob = Column(BLOB, nullable=True)
-    partition_id = Column(Integer, ForeignKey('partitions.id'), nullable=True)
-    original_partition_id = Column(Integer, nullable=True)
-    partition = relationship("Partition", back_populates="items")
-    tags = relationship("Tag", secondary=item_tags, back_populates="items")
+        updates = [
+            ('category_id', 'INTEGER'),
+            ('is_deleted', 'INTEGER DEFAULT 0'),
+            ('item_type', "TEXT DEFAULT 'text'"),
+            ('data_blob', 'BLOB'),
+            ('content_hash', 'TEXT'),
+            ('is_locked', 'INTEGER DEFAULT 0')
+        ]
 
-class Tag(Base):
-    __tablename__ = 'tags'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(50), unique=True, nullable=False)
-    items = relationship("ClipboardItem", secondary=item_tags, back_populates="tags")
-    partitions = relationship("Partition", secondary=partition_tags, back_populates="tags")
+        for col, type_def in updates:
+            if col not in cols:
+                try: c.execute(f'ALTER TABLE ideas ADD COLUMN {col} {type_def}')
+                except: pass
 
-class DBManager:
-    def __init__(self, db_name='clipboard_data.db'):
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
+        if 'content_hash' not in cols:
+            try: c.execute('CREATE INDEX IF NOT EXISTS idx_content_hash ON ideas(content_hash)')
+            except: pass
+
+        c.execute("PRAGMA table_info(categories)")
+        cat_cols = [i[1] for i in c.fetchall()]
+        if 'sort_order' not in cat_cols:
+            try: c.execute('ALTER TABLE categories ADD COLUMN sort_order INTEGER DEFAULT 0')
+            except: pass
+        if 'preset_tags' not in cat_cols:
+            try: c.execute('ALTER TABLE categories ADD COLUMN preset_tags TEXT')
+            except: pass
+
+        self.conn.commit()
+
+    def _fix_trash_consistency(self):
+        try:
+            c = self.conn.cursor()
+            trash_color = COLORS.get('trash', '#2d2d2d')
+            c.execute('''
+                UPDATE ideas
+                SET category_id = NULL, color = ?
+                WHERE is_deleted = 1 AND (category_id IS NOT NULL OR color != ?)
+            ''', (trash_color, trash_color))
+            self.conn.commit()
+        except Exception as e:
+            pass
+
+    def empty_trash(self):
+        c = self.conn.cursor()
+        c.execute('DELETE FROM idea_tags WHERE idea_id IN (SELECT id FROM ideas WHERE is_deleted=1)')
+        c.execute('DELETE FROM ideas WHERE is_deleted=1')
+        self.conn.commit()
+
+    def set_locked(self, idea_ids, state):
+        if not idea_ids: return
+        c = self.conn.cursor()
+        val = 1 if state else 0
+        placeholders = ','.join('?' * len(idea_ids))
+        c.execute(f'UPDATE ideas SET is_locked=? WHERE id IN ({placeholders})', (val, *idea_ids))
+        self.conn.commit()
+
+    def get_lock_status(self, idea_ids):
+        if not idea_ids: return {}
+        c = self.conn.cursor()
+        placeholders = ','.join('?' * len(idea_ids))
+        c.execute(f'SELECT id, is_locked FROM ideas WHERE id IN ({placeholders})', tuple(idea_ids))
+        return dict(c.fetchall())
+
+    def add_idea(self, title, content, color=None, tags=[], category_id=None, item_type='text', data_blob=None):
+        if color is None: color = COLORS['default_note']
+        c = self.conn.cursor()
+        c.execute(
+            'INSERT INTO ideas (title, content, color, category_id, item_type, data_blob) VALUES (?,?,?,?,?,?)',
+            (title, content, color, category_id, item_type, data_blob)
+        )
+        iid = c.lastrowid
+        self._update_tags(iid, tags)
+        self.conn.commit()
+        return iid
+
+    def update_idea(self, iid, title, content, color, tags, category_id=None, item_type='text', data_blob=None):
+        c = self.conn.cursor()
+        c.execute(
+            'UPDATE ideas SET title=?, content=?, color=?, category_id=?, item_type=?, data_blob=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            (title, content, color, category_id, item_type, data_blob, iid)
+        )
+        self._update_tags(iid, tags)
+        self.conn.commit()
+
+    def _update_tags(self, iid, tags):
+        c = self.conn.cursor()
+        c.execute('DELETE FROM idea_tags WHERE idea_id=?', (iid,))
+        if not tags: return
+        for t in tags:
+            t = t.strip()
+            if t:
+                c.execute('INSERT OR IGNORE INTO tags (name) VALUES (?)', (t,))
+                c.execute('SELECT id FROM tags WHERE name=?', (t,))
+                tid = c.fetchone()[0]
+                c.execute('INSERT INTO idea_tags VALUES (?,?)', (iid, tid))
+
+    def _append_tags(self, iid, tags):
+        c = self.conn.cursor()
+        for t in tags:
+            t = t.strip()
+            if t:
+                c.execute('INSERT OR IGNORE INTO tags (name) VALUES (?)', (t,))
+                c.execute('SELECT id FROM tags WHERE name=?', (t,))
+                tid = c.fetchone()[0]
+                c.execute('INSERT OR IGNORE INTO idea_tags VALUES (?,?)', (iid, tid))
+
+    def add_tags_to_multiple_ideas(self, idea_ids, tags_list):
+        if not idea_ids or not tags_list: return
+        c = self.conn.cursor()
+        for tag_name in tags_list:
+            tag_name = tag_name.strip()
+            if not tag_name: continue
+            c.execute('INSERT OR IGNORE INTO tags (name) VALUES (?)', (tag_name,))
+            c.execute('SELECT id FROM tags WHERE name=?', (tag_name,))
+            tid = c.fetchone()[0]
+            for iid in idea_ids:
+                c.execute('INSERT OR IGNORE INTO idea_tags (idea_id, tag_id) VALUES (?,?)', (iid, tid))
+        self.conn.commit()
+
+    def remove_tag_from_multiple_ideas(self, idea_ids, tag_name):
+        if not idea_ids or not tag_name: return
+        c = self.conn.cursor()
+        c.execute('SELECT id FROM tags WHERE name=?', (tag_name,))
+        res = c.fetchone()
+        if not res: return
+        tid = res[0]
+        placeholders = ','.join('?' * len(idea_ids))
+        sql = f'DELETE FROM idea_tags WHERE tag_id=? AND idea_id IN ({placeholders})'
+        c.execute(sql, (tid, *idea_ids))
+        self.conn.commit()
+
+    def get_union_tags(self, idea_ids):
+        if not idea_ids: return []
+        c = self.conn.cursor()
+        placeholders = ','.join('?' * len(idea_ids))
+        sql = f'''
+            SELECT DISTINCT t.name
+            FROM tags t
+            JOIN idea_tags it ON t.id = it.tag_id
+            WHERE it.idea_id IN ({placeholders})
+            ORDER BY t.name ASC
+        '''
+        c.execute(sql, tuple(idea_ids))
+        return [r[0] for r in c.fetchall()]
+
+    def add_clipboard_item(self, item_type, content, data_blob=None, category_id=None):
+        c = self.conn.cursor()
+        hasher = hashlib.sha256()
+        if item_type == 'text' or item_type == 'file':
+            hasher.update(content.encode('utf-8'))
+        elif item_type == 'image' and data_blob:
+            hasher.update(data_blob)
+        content_hash = hasher.hexdigest()
+
+        c.execute("SELECT id FROM ideas WHERE content_hash = ?", (content_hash,))
+        existing_idea = c.fetchone()
+
+        if existing_idea:
+            idea_id = existing_idea[0]
+            c.execute("UPDATE ideas SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (idea_id,))
+            self.conn.commit()
+            return idea_id, False
         else:
-            base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        
-        db_path = os.path.join(base_dir, db_name)
-        log.info(f"数据库路径: {db_path}")
+            if item_type == 'text':
+                title = content.strip().split('\n')[0][:50]
+            elif item_type == 'image':
+                title = "[图片]"
+            elif item_type == 'file':
+                title = f"[文件] {os.path.basename(content.split(';')[0])}"
+            else:
+                title = "未命名"
 
-        try:
-            self.engine = create_engine(f'sqlite:///{db_path}?check_same_thread=False', echo=False)
-            Base.metadata.create_all(self.engine)
-            self.Session = sessionmaker(bind=self.engine)
-            self._check_migrations()
-        except Exception as e:
-            log.critical(f"数据库初始化失败: {e}", exc_info=True)
-
-    def _check_migrations(self):
-        from sqlalchemy import inspect, text
-        try:
-            log.info("通用迁移检查：使用 SQLAlchemy Inspector")
-            inspector = inspect(self.engine)
-            
-            with self.engine.connect() as connection:
-                add_col_transaction = connection.begin()
-                try:
-                    for table_name, table in Base.metadata.tables.items():
-                        log.debug(f"检查表 '{table_name}' 的迁移...")
-                        existing_cols = {c['name'] for c in inspector.get_columns(table_name)}
-                        for column in table.columns:
-                            if column.name not in existing_cols:
-                                col_type = column.type.compile(self.engine.dialect)
-                                stmt = text(f'ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type}')
-                                connection.execute(stmt)
-                                log.info(f"✅ 表 '{table_name}' 中添加字段: {column.name}")
-                    add_col_transaction.commit()
-                except Exception as e:
-                    log.error(f"添加新列失败，正在回滚: {e}")
-                    add_col_transaction.rollback()
-                    raise
-
-                if inspector.has_table("partition_groups"):
-                    log.info("检测到旧的 partition_groups 表，开始数据迁移...")
-                    migration_transaction = connection.begin()
-                    try:
-                        groups = connection.execute(text("SELECT id, name, color, sort_index FROM partition_groups ORDER BY id")).fetchall()
-                        group_tags_results = connection.execute(text("SELECT partition_group_id, tag_id FROM partition_group_tags")).fetchall()
-                        group_tags_map = {}
-                        for group_id, tag_id in group_tags_results:
-                            group_tags_map.setdefault(group_id, []).append(tag_id)
-
-                        for old_group_id, name, color, sort_index in groups:
-                            result = connection.execute(text(
-                                "INSERT INTO partitions (name, color, sort_index, parent_id) VALUES (:name, :color, :sort_index, NULL)"
-                            ), {"name": name, "color": color, "sort_index": sort_index})
-                            
-                            new_parent_id = result.lastrowid
-                            log.info(f"  - 分组 '{name}' (ID:{old_group_id}) 已迁移为顶层分区 (ID:{new_parent_id})")
-
-                            update_stmt = text("UPDATE partitions SET parent_id = :parent_id WHERE group_id = :group_id")
-                            connection.execute(update_stmt, {"parent_id": new_parent_id, "group_id": old_group_id})
-
-                            if old_group_id in group_tags_map:
-                                for tag_id in group_tags_map[old_group_id]:
-                                    connection.execute(text(
-                                        "INSERT INTO partition_tags (partition_id, tag_id) VALUES (:p_id, :t_id)"
-                                    ), {"p_id": new_parent_id, "t_id": tag_id})
-                                log.info(f"    - 成功迁移 {len(group_tags_map[old_group_id])} 个标签")
-
-                        connection.execute(text("DROP TABLE partition_group_tags"))
-                        connection.execute(text("DROP TABLE partition_groups"))
-                        log.info("旧的 partition_group_tags 和 partition_groups 表已成功删除。")
-                        
-                        log.warning("旧的 partitions.group_id 列已保留在数据库中，但不会被使用。")
-
-                        migration_transaction.commit()
-                        log.info("✅ 分区数据迁移成功完成！")
-                    except Exception as e:
-                        log.error(f"分区数据迁移失败，正在回滚: {e}")
-                        migration_transaction.rollback()
-                        raise
-        except Exception as e:
-            log.error(f"迁移检查失败: {e}", exc_info=True)
-
-    def get_session(self):
-        return self.Session()
-
-    def add_item(self, text, is_file=False, file_path=None, item_type='text', image_path=None, partition_id=None, data_blob=None, thumbnail_blob=None):
-        session = self.get_session()
-        try:
-            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
-            existing = session.query(ClipboardItem).filter_by(content_hash=text_hash).first()
-            if existing:
-                existing.last_visited_at = datetime.now()
-                existing.modified_at = datetime.now()
-                existing.visit_count += 1
-                if partition_id and not existing.partition_id:
-                     existing.partition_id = partition_id
-                session.commit()
-                return existing, False
-            
-            min_sort = session.query(func.min(ClipboardItem.sort_index)).scalar()
-            new_sort = (min_sort - 1.0) if min_sort is not None else 0.0
-            note_txt = os.path.basename(file_path) if is_file and file_path else text.split('\n')[0][:50]
-            
-            new_item = ClipboardItem(
-                content=text, content_hash=text_hash, sort_index=new_sort, note=note_txt,
-                is_file=is_file, file_path=file_path, item_type=item_type, image_path=image_path,
-                partition_id=partition_id, data_blob=data_blob, thumbnail_blob=thumbnail_blob
+            default_color = COLORS['default_note']
+            c.execute(
+                'INSERT INTO ideas (title, content, item_type, data_blob, category_id, content_hash, color) VALUES (?,?,?,?,?,?,?)',
+                (title, content, item_type, data_blob, category_id, content_hash, default_color)
             )
-            session.add(new_item)
-            try:
-                session.commit()
-                session.refresh(new_item)
-                return new_item, True
-            except Exception:
-                session.rollback()
-                existing = session.query(ClipboardItem).filter_by(content_hash=text_hash).first()
-                if existing:
-                    existing.last_visited_at = datetime.now()
-                    existing.visit_count += 1
-                    session.commit()
-                    return existing, False
-                return None, False
-        except Exception as e:
-            log.error(f"写入失败: {e}")
-            session.rollback()
-            return None, False
-        finally:
-            session.close()
+            idea_id = c.lastrowid
+            
+            self._update_tags(idea_id, ["剪贴板"])
+            self.conn.commit()
+            return idea_id, True
 
-    def _build_query(self, session, sort_mode="manual", date_filter=None, date_modify_filter=None, partition_filter=None, include_deleted=False):
-        log.debug(f"🔍 构建查询: sort={sort_mode}, date={date_filter}, date_modify={date_modify_filter}, partition={partition_filter}, deleted={include_deleted}")
-        q = session.query(ClipboardItem).options(joinedload(ClipboardItem.tags))
-        if include_deleted:
-            q = q.filter(ClipboardItem.is_deleted == True)
+    def toggle_field(self, iid, field):
+        c = self.conn.cursor()
+        c.execute(f'UPDATE ideas SET {field} = NOT {field} WHERE id=?', (iid,))
+        self.conn.commit()
+
+    def set_deleted(self, iid, state):
+        c = self.conn.cursor()
+        if state:
+            trash_color = COLORS.get('trash', '#2d2d2d')
+            c.execute(
+                'UPDATE ideas SET is_deleted=1, category_id=NULL, color=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                (trash_color, iid)
+            )
         else:
-            q = q.filter(ClipboardItem.is_deleted != True)
+            uncat_color = COLORS.get('uncategorized', '#0A362F')
+            c.execute(
+                'UPDATE ideas SET is_deleted=0, category_id=NULL, color=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                (uncat_color, iid)
+            )
+        self.conn.commit()
+
+    def set_favorite(self, iid, state):
+        c = self.conn.cursor()
+        c.execute('UPDATE ideas SET is_favorite=? WHERE id=?', (1 if state else 0, iid))
+        self.conn.commit()
+
+    def move_category(self, iid, cat_id):
+        c = self.conn.cursor()
+        c.execute('UPDATE ideas SET category_id=?, is_deleted=0 WHERE id=?', (cat_id, iid))
+        if cat_id is not None:
+            c.execute('SELECT color, preset_tags FROM categories WHERE id=?', (cat_id,))
+            result = c.fetchone()
+            if result:
+                cat_color = result[0]
+                preset_tags_str = result[1]
+                if cat_color:
+                    c.execute('UPDATE ideas SET color=? WHERE id=?', (cat_color, iid))
+                if preset_tags_str:
+                    tags_list = [t.strip() for t in preset_tags_str.split(',') if t.strip()]
+                    if tags_list:
+                        self._append_tags(iid, tags_list)
+        else:
+            uncat_color = COLORS.get('uncategorized', '#0A362F')
+            c.execute('UPDATE ideas SET color=? WHERE id=?', (uncat_color, iid))
+        self.conn.commit()
+
+    def delete_permanent(self, iid):
+        c = self.conn.cursor()
+        c.execute('DELETE FROM ideas WHERE id=?', (iid,))
+        self.conn.commit()
+
+    def get_idea(self, iid, include_blob=False):
+        c = self.conn.cursor()
+        if include_blob:
+            c.execute('SELECT * FROM ideas WHERE id=?', (iid,))
+        else:
+            # 明确指定列，与 get_ideas 保持一致 (无blob)
+            # 0:id, 1:title, 2:content, 3:color, 4:pinned, 5:fav, 6:created, 7:updated,
+            # 8:cat_id, 9:is_deleted, 10:item_type, 11:data_blob(NULL), 12:hash(NULL), 13:is_locked
+            c.execute('''
+                SELECT id, title, content, color, is_pinned, is_favorite,
+                       created_at, updated_at, category_id, is_deleted, item_type,
+                       NULL as data_blob, NULL as content_hash, is_locked
+                FROM ideas WHERE id=?
+            ''', (iid,))
+        return c.fetchone()
+
+    def get_ideas(self, search, f_type, f_val, page=None, page_size=20, tag_filter=None):
+        c = self.conn.cursor()
+
+        # 【关键修改】显式列出所有字段，确保字段顺序绝对固定
+        # 索引对照：
+        # 0: id
+        # 1: title
+        # 2: content
+        # 3: color
+        # 4: is_pinned
+        # 5: is_favorite
+        # 6: created_at
+        # 7: updated_at
+        # 8: category_id
+        # 9: is_deleted
+        # 10: item_type
+        # 11: data_blob
+        # 12: content_hash
+        # 13: is_locked
         
-        if partition_filter:
-            ptype = partition_filter.get('type')
-            pid = partition_filter.get('id')
-            if ptype == 'partition':
-                q = q.filter(ClipboardItem.partition_id.in_(self._get_all_descendant_ids(session, pid)))
-            elif ptype == 'uncategorized':
-                q = q.filter(ClipboardItem.partition_id == None)
-            elif ptype == 'untagged':
-                q = q.filter(~exists().where(item_tags.c.item_id == ClipboardItem.id))
+        q = """
+            SELECT DISTINCT
+                i.id, i.title, i.content, i.color, i.is_pinned, i.is_favorite,
+                i.created_at, i.updated_at, i.category_id, i.is_deleted,
+                i.item_type, i.data_blob, i.content_hash, i.is_locked
+            FROM ideas i
+            LEFT JOIN idea_tags it ON i.id=it.idea_id
+            LEFT JOIN tags t ON it.tag_id=t.id
+            WHERE 1=1
+        """
+        p = []
         
-        def apply_date_filter(query, column, filter_str):
-            if not filter_str:
-                return query
-            today = datetime.now().date()
-            start_dt, end_dt = None, None
-            if filter_str == "今日":
-                start_dt, end_dt = datetime.combine(today, time.min), datetime.combine(today, time.max)
-            elif filter_str == "昨日":
-                start_dt, end_dt = datetime.combine(today - timedelta(days=1), time.min), datetime.combine(today - timedelta(days=1), time.max)
-            elif filter_str == "周内":
-                start_dt = datetime.combine(today - timedelta(days=7), time.min)
-            elif filter_str == "两周":
-                start_dt = datetime.combine(today - timedelta(days=14), time.min)
-            elif filter_str == "本月":
-                start_dt = datetime.combine(today.replace(day=1), time.min)
-            elif filter_str == "上月":
-                first_day = today.replace(day=1)
-                last_month_end = first_day - timedelta(days=1)
-                start_dt, end_dt = datetime.combine(last_month_end.replace(day=1), time.min), datetime.combine(last_month_end, time.max)
+        if f_type == 'trash': q += ' AND i.is_deleted=1'
+        else: q += ' AND (i.is_deleted=0 OR i.is_deleted IS NULL)'
+
+        if f_type == 'category':
+            if f_val is None: q += ' AND i.category_id IS NULL'
+            else: q += ' AND i.category_id=?'; p.append(f_val)
+        elif f_type == 'today': q += " AND date(i.updated_at,'localtime')=date('now','localtime')"
+        elif f_type == 'clipboard': q += " AND i.id IN (SELECT idea_id FROM idea_tags WHERE tag_id = (SELECT id FROM tags WHERE name = '剪贴板'))"
+        elif f_type == 'untagged': q += ' AND i.id NOT IN (SELECT idea_id FROM idea_tags)'
+        elif f_type == 'favorite': q += ' AND i.is_favorite=1'
+
+        if tag_filter:
+            q += " AND i.id IN (SELECT idea_id FROM idea_tags WHERE tag_id = (SELECT id FROM tags WHERE name = ?))"
+            p.append(tag_filter)
+
+        if search:
+            q += ' AND (i.title LIKE ? OR i.content LIKE ? OR t.name LIKE ?)'
+            p.extend([f'%{search}%']*3)
+
+        if f_type == 'trash':
+            q += ' ORDER BY i.updated_at DESC'
+        else:
+            q += ' ORDER BY i.is_pinned DESC, i.updated_at DESC'
+
+        if page is not None and page_size is not None:
+            limit = page_size
+            offset = (page - 1) * page_size
+            q += ' LIMIT ? OFFSET ?'
+            p.extend([limit, offset])
             
-            if start_dt:
-                query = query.filter(column >= start_dt)
-            if end_dt:
-                query = query.filter(column <= end_dt)
-            return query
+        c.execute(q, p)
+        return c.fetchall()
 
-        q = apply_date_filter(q, ClipboardItem.created_at, date_filter)
-        q = apply_date_filter(q, ClipboardItem.modified_at, date_modify_filter)
+    def get_ideas_count(self, search, f_type, f_val, tag_filter=None):
+        c = self.conn.cursor()
+        q = "SELECT COUNT(DISTINCT i.id) FROM ideas i LEFT JOIN idea_tags it ON i.id=it.idea_id LEFT JOIN tags t ON it.tag_id=t.id WHERE 1=1"
+        p = []
+
+        if f_type == 'trash': q += ' AND i.is_deleted=1'
+        else: q += ' AND (i.is_deleted=0 OR i.is_deleted IS NULL)'
+
+        if f_type == 'category':
+            if f_val is None: q += ' AND i.category_id IS NULL'
+            else: q += ' AND i.category_id=?'; p.append(f_val)
+        elif f_type == 'today': q += " AND date(i.updated_at,'localtime')=date('now','localtime')"
+        elif f_type == 'clipboard': q += " AND i.id IN (SELECT idea_id FROM idea_tags WHERE tag_id = (SELECT id FROM tags WHERE name = '剪贴板'))"
+        elif f_type == 'untagged': q += ' AND i.id NOT IN (SELECT idea_id FROM idea_tags)'
+        elif f_type == 'favorite': q += ' AND i.is_favorite=1'
+
+        if tag_filter:
+            q += " AND i.id IN (SELECT idea_id FROM idea_tags WHERE tag_id = (SELECT id FROM tags WHERE name = ?))"
+            p.append(tag_filter)
+
+        if search:
+            q += ' AND (i.title LIKE ? OR i.content LIKE ? OR t.name LIKE ?)'
+            p.extend([f'%{search}%']*3)
             
-        if sort_mode == "manual":
-            q = q.order_by(ClipboardItem.is_pinned.desc(), ClipboardItem.sort_index.asc())
-        elif sort_mode == "time":
-            q = q.order_by(ClipboardItem.is_pinned.desc(), ClipboardItem.created_at.desc())
-        return q
+        c.execute(q, p)
+        return c.fetchone()[0]
 
-    def get_items(self, sort_mode="manual", limit=50, offset=0, date_filter=None, date_modify_filter=None, partition_filter=None):
-        session = self.get_session()
-        try:
-            include_deleted = (partition_filter and partition_filter.get('type') == 'trash')
-            q = self._build_query(session, sort_mode=sort_mode, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter, include_deleted=include_deleted)
-            if limit is not None:
-                q = q.limit(limit)
-            if offset > 0:
-                q = q.offset(offset)
-            return q.all()
-        except Exception as e:
-            log.error(f"查询失败: {e}", exc_info=True)
-            return []
-        finally:
-            session.close()
+    def get_tags(self, iid):
+        c = self.conn.cursor()
+        c.execute('SELECT t.name FROM tags t JOIN idea_tags it ON t.id=it.tag_id WHERE it.idea_id=?', (iid,))
+        return [r[0] for r in c.fetchall()]
 
-    def get_count(self, date_filter=None, date_modify_filter=None, partition_filter=None):
-        session = self.get_session()
-        try:
-            include_deleted = (partition_filter and partition_filter.get('type') == 'trash')
-            q = self._build_query(session, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter, include_deleted=include_deleted)
-            return q.count()
-        except Exception as e:
-            log.error(f"计数失败: {e}", exc_info=True)
-            return 0
-        finally:
-            session.close()
+    def get_all_tags(self):
+        c = self.conn.cursor()
+        c.execute('SELECT name FROM tags ORDER BY name')
+        return [r[0] for r in c.fetchall()]
 
-    def update_item(self, item_id, **kwargs):
-        session = self.get_session()
-        try:
-            item = session.query(ClipboardItem).get(item_id)
-            if item:
-                for k, v in kwargs.items():
-                    setattr(item, k, v)
-                session.commit()
-                return True
-            return False
-        except Exception as e:
-            log.error(f"更新失败: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
+    def get_categories(self):
+        c = self.conn.cursor()
+        c.execute('SELECT * FROM categories ORDER BY sort_order ASC, name ASC')
+        return c.fetchall()
 
-    def toggle_field_batch(self, item_ids, field_name):
-        if not item_ids:
-            return
+    def add_category(self, name, parent_id=None):
+        c = self.conn.cursor()
+        if parent_id is None:
+            c.execute("SELECT MAX(sort_order) FROM categories WHERE parent_id IS NULL")
+        else:
+            c.execute("SELECT MAX(sort_order) FROM categories WHERE parent_id = ?", (parent_id,))
+        max_order = c.fetchone()[0]
+        new_order = (max_order or 0) + 1
 
-        session = self.get_session()
-        try:
-            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).all()
-            if not items:
-                return
+        palette = [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
+            '#D4A5A5', '#9B59B6', '#3498DB', '#E67E22', '#2ECC71',
+            '#E74C3C', '#F1C40F', '#1ABC9C', '#34495E', '#95A5A6'
+        ]
+        chosen_color = random.choice(palette)
 
-            base_item = items[0]
-            current_value = getattr(base_item, field_name)
-            new_value = not current_value
+        c.execute(
+            'INSERT INTO categories (name, parent_id, sort_order, color) VALUES (?, ?, ?, ?)',
+            (name, parent_id, new_order, chosen_color)
+        )
+        self.conn.commit()
 
-            session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).update({field_name: new_value}, synchronize_session=False)
-            session.commit()
-        except Exception as e:
-            log.error(f"批量切换字段 {field_name} 失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def rename_category(self, cat_id, new_name):
+        c = self.conn.cursor()
+        c.execute('UPDATE categories SET name=? WHERE id=?', (new_name, cat_id))
+        self.conn.commit()
 
-    def move_items_to_trash(self, ids):
-        session = self.get_session()
-        try:
-            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(ids), ClipboardItem.is_locked == False).all()
-            for item in items:
-                item.original_partition_id = item.partition_id
-                item.partition_id = None
-                item.is_deleted = True
-            session.commit()
-        except Exception as e:
-            log.error(f"移动到回收站失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def set_category_color(self, cat_id, color):
+        c = self.conn.cursor()
+        c.execute('UPDATE categories SET color=? WHERE id=?', (color, cat_id))
+        self.conn.commit()
 
-    def restore_items_from_trash(self, ids):
-        session = self.get_session()
-        try:
-            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(ids)).all()
-            if not items:
-                return
-            existing_pids = {p_id for p_id, in session.query(Partition.id).all()}
-            for item in items:
-                item.is_deleted = False
-                item.partition_id = item.original_partition_id if item.original_partition_id in existing_pids else None
-                item.original_partition_id = None
-            session.commit()
-        except Exception as e:
-            log.error(f"从回收站恢复失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def set_category_preset_tags(self, cat_id, tags_str):
+        c = self.conn.cursor()
+        c.execute('UPDATE categories SET preset_tags=? WHERE id=?', (tags_str, cat_id))
+        self.conn.commit()
 
-    def delete_items_permanently(self, ids):
-        session = self.get_session()
-        try:
-            session.query(ClipboardItem).filter(ClipboardItem.id.in_(ids)).delete(synchronize_session=False)
-            session.commit()
-        except Exception as e:
-            log.error(f"永久删除失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def get_category_preset_tags(self, cat_id):
+        c = self.conn.cursor()
+        c.execute('SELECT preset_tags FROM categories WHERE id=?', (cat_id,))
+        res = c.fetchone()
+        return res[0] if res else ""
 
-    def update_sort_order(self, ids):
-        session = self.get_session()
-        try:
-            for idx, i in enumerate(ids):
-                item = session.query(ClipboardItem).get(i)
-                if item:
-                    item.sort_index = float(idx)
-            session.commit()
-        except Exception as e:
-            log.error(f"更新排序失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def apply_preset_tags_to_category_items(self, cat_id, tags_list):
+        if not tags_list: return
+        c = self.conn.cursor()
+        c.execute('SELECT id FROM ideas WHERE category_id=? AND is_deleted=0', (cat_id,))
+        items = c.fetchall()
+        for (iid,) in items:
+            self._append_tags(iid, tags_list)
+        self.conn.commit()
 
-    def get_stats(self):
-        stats = {'tags': [], 'stars': {}, 'colors': {}, 'types': {}}
-        session = self.get_session()
-        try:
-            last_used = func.max(ClipboardItem.modified_at).label("last_used")
-            stats['tags'] = session.query(Tag.name, func.count(item_tags.c.item_id)).outerjoin(item_tags).outerjoin(ClipboardItem).group_by(Tag.id).order_by(last_used.desc()).all()
-            stats['stars'] = {s: c for s, c in session.query(ClipboardItem.star_level, func.count(ClipboardItem.id)).group_by(ClipboardItem.star_level).all()}
-            stats['colors'] = {c: count for c, count in session.query(ClipboardItem.custom_color, func.count(ClipboardItem.id)).group_by(ClipboardItem.custom_color).all() if c}
-            return stats
-        except Exception as e:
-            log.error(f"获取统计失败: {e}", exc_info=True)
-            return stats
-        finally:
-            session.close()
+    def delete_category(self, cid):
+        c = self.conn.cursor()
+        c.execute('UPDATE ideas SET category_id=NULL WHERE category_id=?', (cid,))
+        c.execute('DELETE FROM categories WHERE id=?', (cid,))
+        self.conn.commit()
 
-    def add_tags_to_items(self, item_ids, tag_names):
-        session = self.get_session()
-        try:
-            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).all()
-            if not items:
-                return
-            for name in [name.strip() for name in tag_names if name.strip()]:
-                tag = session.query(Tag).filter_by(name=name).first() or Tag(name=name)
-                session.add(tag)
-                session.flush()
-                for item in items:
-                    if tag not in item.tags:
-                        item.tags.append(tag)
-            session.commit()
-        except Exception as e:
-            log.error(f"批量添加标签失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    def get_counts(self):
+        c = self.conn.cursor()
+        d = {}
+        queries = {
+            'all': "is_deleted=0 OR is_deleted IS NULL",
+            'today': "(is_deleted=0 OR is_deleted IS NULL) AND date(updated_at,'localtime')=date('now','localtime')",
+            'clipboard': "(is_deleted=0 OR is_deleted IS NULL) AND id IN (SELECT idea_id FROM idea_tags WHERE tag_id = (SELECT id FROM tags WHERE name = '剪贴板'))",
+            'uncategorized': "(is_deleted=0 OR is_deleted IS NULL) AND category_id IS NULL",
+            'untagged': "(is_deleted=0 OR is_deleted IS NULL) AND id NOT IN (SELECT idea_id FROM idea_tags)",
+            'favorite': "(is_deleted=0 OR is_deleted IS NULL) AND is_favorite=1",
+            'trash': "is_deleted=1"
+        }
+        for k, v in queries.items():
+            c.execute(f"SELECT COUNT(*) FROM ideas WHERE {v}")
+            d[k] = c.fetchone()[0]
 
-    def remove_tag_from_item(self, item_id, tag_name):
-        session = self.get_session()
-        try:
-            item = session.query(ClipboardItem).get(item_id)
-            tag = session.query(Tag).filter_by(name=tag_name).first()
-            if item and tag and tag in item.tags:
-                item.tags.remove(tag)
-                session.commit()
-        except Exception as e:
-            log.error(f"移除标签失败: {e}")
-            session.rollback()
-        finally:
-            session.close()
+        c.execute("SELECT category_id, COUNT(*) FROM ideas WHERE (is_deleted=0 OR is_deleted IS NULL) GROUP BY category_id")
+        d['categories'] = dict(c.fetchall())
+        return d
 
-    def auto_delete_old_data(self, days=21):
-        session = self.get_session()
-        try:
-            count = session.query(ClipboardItem).filter(
-                ClipboardItem.created_at < datetime.now() - timedelta(days=days),
-                ClipboardItem.is_locked == False
-            ).delete(synchronize_session=False)
-            session.commit()
-            return count
-        except Exception as e:
-            log.error(f"清理旧数据失败: {e}")
-            session.rollback()
-            return 0
-        finally:
-            session.close()
+    def get_top_tags(self):
+        c = self.conn.cursor()
+        c.execute('''SELECT t.name, COUNT(it.idea_id) as c FROM tags t
+                     JOIN idea_tags it ON t.id=it.tag_id JOIN ideas i ON it.idea_id=i.id
+                     WHERE i.is_deleted=0 GROUP BY t.id ORDER BY c DESC LIMIT 5''')
+        return c.fetchall()
 
     def get_partitions_tree(self):
-        session = self.get_session()
-        try:
-            all_partitions = session.query(Partition).order_by(Partition.sort_index).all()
-            for p in all_partitions:
-                len(p.children)
-            return [p for p in all_partitions if p.parent_id is None]
-        except Exception as e:
-            log.error(f"获取分区树失败: {e}", exc_info=True)
-            return []
-        finally:
-            session.close()
+        class Partition:
+            def __init__(self, id, name, color, parent_id, sort_order):
+                self.id = id
+                self.name = name
+                self.color = color
+                self.parent_id = parent_id
+                self.sort_order = sort_order
+                self.children = []
 
-    def add_partition(self, name, parent_id=None):
-        session = self.get_session()
-        try:
-            new_p = Partition(name=name, parent_id=parent_id)
-            session.add(new_p)
-            session.commit()
-            session.refresh(new_p)
-            return new_p
-        except Exception as e:
-            log.error(f"添加分区失败: {e}", exc_info=True)
-            session.rollback()
-            return None
-        finally:
-            session.close()
+        c = self.conn.cursor()
+        c.execute("SELECT id, name, color, parent_id, sort_order FROM categories ORDER BY sort_order ASC, name ASC")
 
-    def rename_partition(self, partition_id, new_name):
-        session = self.get_session()
-        try:
-            p = session.query(Partition).get(partition_id)
-            if p:
-                p.name = new_name
-                session.commit()
-            return True
-        except Exception as e:
-            log.error(f"重命名分区失败: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
+        nodes = {row[0]: Partition(*row) for row in c.fetchall()}
 
-    def _get_all_descendant_ids(self, session, partition_id):
-        cte = session.query(Partition.id).filter(Partition.id == partition_id).cte(name="cte", recursive=True)
-        cte = cte.union_all(session.query(Partition.id).filter(Partition.parent_id == cte.c.id))
-        return [i[0] for i in session.query(cte.c.id).all()]
+        tree = []
+        for node_id, node in nodes.items():
+            if node.parent_id in nodes:
+                nodes[node.parent_id].children.append(node)
+            else:
+                tree.append(node)
 
-    def delete_partition(self, partition_id):
-        session = self.get_session()
-        try:
-            p_to_del = session.query(Partition).get(partition_id)
-            if not p_to_del:
-                return False
-            all_ids = self._get_all_descendant_ids(session, partition_id)
-            item_ids = [i[0] for i in session.query(ClipboardItem.id).filter(ClipboardItem.partition_id.in_(all_ids)).all()]
-            if item_ids:
-                self.move_items_to_trash(item_ids)
-            session.delete(p_to_del)
-            session.commit()
-            return True
-        except Exception as e:
-            log.error(f"递归删除分区失败: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
-
-    def update_partition(self, partition_id, **kwargs):
-        session = self.get_session()
-        try:
-            p = session.query(Partition).get(partition_id)
-            if p:
-                for k, v in kwargs.items():
-                    setattr(p, k, v)
-                session.commit()
-            return True
-        except Exception as e:
-            log.error(f"更新分区失败: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
+        return tree
 
     def get_partition_item_counts(self):
-        session = self.get_session()
-        try:
-            base_q = session.query(ClipboardItem).filter(ClipboardItem.is_deleted != True)
-            direct_counts = dict(base_q.with_entities(ClipboardItem.partition_id, func.count(ClipboardItem.id)).group_by(ClipboardItem.partition_id).all())
-            uncategorized = direct_counts.pop(None, 0)
-            total_counts = direct_counts.copy()
-            partitions = session.query(Partition).all()
-            p_map = {p.id: p for p in partitions}
-            for p in partitions:
-                direct_count = direct_counts.get(p.id, 0)
-                if direct_count > 0:
-                    parent = p_map.get(p.parent_id)
-                    while parent:
-                        total_counts[parent.id] = total_counts.get(parent.id, 0) + direct_count
-                        parent = p_map.get(parent.parent_id)
-            today_start = datetime.combine(datetime.now().date(), time.min)
-            return {
-                'total': base_q.count(),
-                'partitions': total_counts,
-                'uncategorized': uncategorized,
-                'untagged': base_q.filter(~exists().where(item_tags.c.item_id == ClipboardItem.id)).count(),
-                'trash': session.query(func.count(ClipboardItem.id)).filter(ClipboardItem.is_deleted == True).scalar(),
-                'today_modified': base_q.filter(ClipboardItem.modified_at >= today_start).count()
-            }
-        except Exception as e:
-            log.error(f"获取分区项目计数失败: {e}", exc_info=True)
-            return {}
-        finally:
-            session.close()
+        c = self.conn.cursor()
+        counts = {'partitions': {}}
 
-    def move_items_to_partition(self, item_ids, partition_id):
-        session = self.get_session()
-        try:
-            session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).update({'partition_id': partition_id}, synchronize_session=False)
-            session.commit()
-            return True
-        except Exception as e:
-            log.error(f"移动项目到分区失败: {e}", exc_info=True)
-            session.rollback()
-            return False
-        finally:
-            session.close()
+        c.execute("SELECT COUNT(*) FROM ideas WHERE is_deleted=0")
+        counts['total'] = c.fetchone()[0]
 
-    def restore_and_move_items(self, item_ids, target_partition_id):
-        session = self.get_session()
+        c.execute("SELECT COUNT(*) FROM ideas WHERE is_deleted=0 AND date(updated_at, 'localtime') = date('now', 'localtime')")
+        counts['today_modified'] = c.fetchone()[0]
+
+        c.execute("SELECT category_id, COUNT(*) FROM ideas WHERE is_deleted=0 GROUP BY category_id")
+        for cat_id, count in c.fetchall():
+            if cat_id is not None:
+                counts['partitions'][cat_id] = count
+
+        # Add missing counts
+        c.execute("SELECT COUNT(*) FROM ideas i JOIN idea_tags it ON i.id = it.idea_id JOIN tags t ON it.tag_id = t.id WHERE t.name = '剪贴板' AND i.is_deleted=0")
+        counts['clipboard'] = c.fetchone()[0]
+
+        c.execute("SELECT COUNT(*) FROM ideas WHERE is_favorite=1 AND is_deleted=0")
+        counts['favorite'] = c.fetchone()[0]
+
+        return counts
+
+    def save_category_order(self, update_list):
+        c = self.conn.cursor()
         try:
-            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).all()
-            if not items:
-                return False
-            for item in items:
-                item.is_deleted = False
-                item.partition_id = target_partition_id
-                item.original_partition_id = None
-            session.commit()
-            return True
+            c.execute("BEGIN TRANSACTION")
+            for item in update_list:
+                c.execute(
+                    "UPDATE categories SET sort_order = ?, parent_id = ? WHERE id = ?",
+                    (item['sort_order'], item['parent_id'], item['id'])
+                )
+            c.execute("COMMIT")
         except Exception as e:
-            log.error(f"恢复并移动项目失败: {e}", exc_info=True)
-            session.rollback()
-            return False
+            c.execute("ROLLBACK")
+            pass
         finally:
-            session.close()
+            self.conn.commit()
+
+    def rename_tag(self, old_name, new_name):
+        new_name = new_name.strip()
+        if not new_name or old_name == new_name: return
+        c = self.conn.cursor()
+        c.execute("SELECT id FROM tags WHERE name=?", (old_name,))
+        old_res = c.fetchone()
+        if not old_res: return
+        old_id = old_res[0]
+        c.execute("SELECT id FROM tags WHERE name=?", (new_name,))
+        new_res = c.fetchone()
+        try:
+            if new_res:
+                new_id = new_res[0]
+                c.execute("UPDATE OR IGNORE idea_tags SET tag_id=? WHERE tag_id=?", (new_id, old_id))
+                c.execute("DELETE FROM idea_tags WHERE tag_id=?", (old_id,))
+                c.execute("DELETE FROM tags WHERE id=?", (old_id,))
+            else:
+                c.execute("UPDATE tags SET name=? WHERE id=?", (new_name, old_id))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+
+    def delete_tag(self, tag_name):
+        c = self.conn.cursor()
+        c.execute("SELECT id FROM tags WHERE name=?", (tag_name,))
+        res = c.fetchone()
+        if res:
+            tag_id = res[0]
+            c.execute("DELETE FROM idea_tags WHERE tag_id=?", (tag_id,))
+            c.execute("DELETE FROM tags WHERE id=?", (tag_id,))
+            self.conn.commit()

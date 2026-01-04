@@ -29,7 +29,7 @@ class AppController(QObject):
         super().__init__()
         self.app = app
         
-        from data.database import DBManager
+        from data.database import DatabaseManager as DBManager
         from quick import QuickWindow as QuickPanelWindow
         from ui.ball import FloatingBall
         from ui.tray_manager import TrayManager
@@ -55,13 +55,16 @@ class AppController(QObject):
         # Connect ActionPopup signals
         self.action_popup.request_favorite.connect(lambda item_id: self.db_manager.update_item(item_id, is_favorite=True))
         self.action_popup.request_tag_add.connect(self.db_manager.add_tags_to_items)
-        self.action_popup.request_manager.connect(self.quick_panel._launch_main_app)
+        self.action_popup.request_manager.connect(self._launch_main_app)
 
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
-        self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
+        self.ball.request_show_main_window.connect(self._launch_main_app)
         self.ball.request_quit_app.connect(self.app.quit)
         
+        # Connect quick panel's request to launch main window
+        self.quick_panel.toggle_main_window_requested.connect(self._launch_main_app)
+
         self.tray.request_show_quick_panel.connect(self.toggle_quick_panel)
         self.tray.request_quit.connect(self.app.quit)
         
@@ -83,6 +86,17 @@ class AppController(QObject):
         """当剪贴板捕获到新数据时，显示快捷操作条"""
         if is_new and item:
             self.action_popup.show_at_mouse(item.id)
+
+    def _launch_main_app(self):
+        """启动主程序窗口（占位）"""
+        log.info("🚀 请求启动主程序窗口...")
+        # 在这里添加启动主窗口的逻辑
+        # from ui.main_window import MainWindow
+        # if not hasattr(self, 'main_window') or not self.main_window.isVisible():
+        #     self.main_window = MainWindow(self.db_manager)
+        #     self.main_window.show()
+        # else:
+        #     self.main_window.activateWindow()
 
 def main():
     log.info("🚀 启动印象记忆_Pro...")

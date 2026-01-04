@@ -58,7 +58,7 @@ def log(message):
     pass
 
 try:
-    from data.db_manager import DatabaseManager as DBManager
+    from data.database import DatabaseManager as DBManager
     from services.clipboard import ClipboardManager
 except ImportError:
     class DBManager:
