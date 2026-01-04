@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import QWidget, QMenu
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QRectF
 from PyQt5.QtGui import (QPainter, QColor, QPen, QBrush, 
                          QLinearGradient, QPainterPath, QPolygonF)
-from core.settings import save_setting
+from core.settings import save_setting, load_setting
 
 class FloatingBall(QWidget):
     request_show_quick_window = pyqtSignal()
@@ -33,7 +33,7 @@ class FloatingBall(QWidget):
         self.is_hovering = False 
         
         # --- 状态与配置 ---
-        self.current_skin = self.SKIN_MOCHA # 默认样式
+        self.current_skin = load_setting('floating_ball_skin', self.SKIN_MOCHA)
         self.is_writing = False 
         self.write_timer = 0     
         self.offset = QPoint()
@@ -60,6 +60,7 @@ class FloatingBall(QWidget):
     def switch_skin(self, skin_id):
         """切换皮肤并刷新"""
         self.current_skin = skin_id
+        save_setting('floating_ball_skin', skin_id)
         self.update()
 
     def _update_physics(self):
