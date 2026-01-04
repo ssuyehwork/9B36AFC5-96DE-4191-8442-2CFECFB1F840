@@ -194,14 +194,21 @@ class ContextMenuHandler:
         self.mw.load_data()
 
     def set_custom_color(self, ids):
-        dlg = ColorDialog(self.mw)
-        if dlg.exec_() and dlg.color:
-            s = QSettings("ClipboardPro", "ColorHistory")
-            h = s.value("colors", [], type=list)
-            if dlg.color in h: h.remove(dlg.color)
-            h.insert(0, dlg.color)
-            s.setValue("colors", h[:10])
-            self.batch_set_color(ids, dlg.color)
+        # Store dialog as an attribute of the main window to prevent garbage collection
+        self.mw.color_dialog_from_menu = ColorDialog(self.mw)
+        dialog = self.mw.color_dialog_from_menu
+
+        def on_finished():
+            if dialog.result() == 1 and dialog.color: # Accepted
+                s = QSettings("ClipboardPro", "ColorHistory")
+                h = s.value("colors", [], type=list)
+                if dialog.color in h: h.remove(dialog.color)
+                h.insert(0, dialog.color)
+                s.setValue("colors", h[:10])
+                self.batch_set_color(ids, dialog.color)
+
+        dialog.finished.connect(on_finished)
+        dialog.show()
 
     def move_to_trash(self, ids):
         if QMessageBox.question(self.mw, "确认", f"移动 {len(ids)} 条记录到回收站?") == QMessageBox.Yes:

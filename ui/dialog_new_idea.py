@@ -42,13 +42,3 @@ class NewIdeaDialog(QDialog):
         """Returns the text entered in the dialog."""
         return self.text_edit.toPlainText().strip()
 
-# Example usage (for testing)
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    dialog = NewIdeaDialog()
-    if dialog.exec_(): # Note: exec_() is used in PyQt5
-        print("Accepted!")
-        print("Idea:", dialog.get_idea_text())
-    else:
-        print("Rejected!")
-    sys.exit(0)

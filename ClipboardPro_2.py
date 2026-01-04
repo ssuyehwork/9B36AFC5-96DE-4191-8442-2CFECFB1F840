@@ -96,9 +96,10 @@ class AppController(QObject):
 
     def _show_common_tags_manager(self):
         """显示常用标签管理对话框"""
-        # 实例化并以模态方式执行对话框
-        dialog = CommonTagsManager(self.quick_panel)
-        dialog.exec_()
+        # Prevent creating multiple instances
+        if not hasattr(self, 'common_tags_manager_dialog') or not self.common_tags_manager_dialog.isVisible():
+            self.common_tags_manager_dialog = CommonTagsManager(self.quick_panel)
+            self.common_tags_manager_dialog.show()
 
     def _show_main_window(self):
         """创建并显示主数据管理窗口"""

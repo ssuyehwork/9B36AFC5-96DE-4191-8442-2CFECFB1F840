@@ -22,7 +22,11 @@ class PartitionTreeWidget(QTreeWidget):
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
+        # 移除 InternalMove，允许外部拖放
+        # self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DropOnly) # 只接受放下，不发起拖拽
+        self.setDefaultDropAction(Qt.MoveAction)
+
         self.setIndentation(20) # 恢复缩进
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setSortingEnabled(False)

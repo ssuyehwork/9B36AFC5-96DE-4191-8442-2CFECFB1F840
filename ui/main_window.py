@@ -1018,9 +1018,14 @@ class MainWindow(QMainWindow):
             self.set_custom_color(item_ids)
 
     def set_custom_color(self, item_ids):
-        dlg = ColorSelectorDialog(self)
-        if dlg.exec_():
-            self.batch_set_color(item_ids, dlg.selected_color or "")
+        self.color_selector_dialog = ColorSelectorDialog(self)
+
+        def on_finished():
+            if self.color_selector_dialog.result() == 1: # Accepted
+                self.batch_set_color(item_ids, self.color_selector_dialog.selected_color or "")
+
+        self.color_selector_dialog.finished.connect(on_finished)
+        self.color_selector_dialog.show()
 
     def batch_set_color(self, ids, clr):
         session = self.db.get_session()
@@ -1052,9 +1057,10 @@ class MainWindow(QMainWindow):
     
     def on_tag_panel_add_tag(self, tag_input=None):
         if not tag_input:
-            dlg = TagDialog(self.db, self)
-            if dlg.exec_():
-                self.tag_panel.refresh_tags(self.db)
+            # 确保dialog在self中有一个引用，防止被垃圾回收
+            self.tag_dialog = TagDialog(self.db, self)
+            self.tag_dialog.finished.connect(lambda: self.tag_panel.refresh_tags(self.db))
+            self.tag_dialog.show()
             return
 
         tags_to_add = tag_input if isinstance(tag_input, list) else [tag_input]

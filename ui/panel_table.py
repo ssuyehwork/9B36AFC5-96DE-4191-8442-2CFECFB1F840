@@ -106,9 +106,26 @@ class TablePanel(QTableWidget):
         drag.setPixmap(pixmap)
 
         # 设置热点为左下角
-        drag.setHotSpot(pixmap.rect().bottomLeft())
+        drag.setHotSpot(QPoint(0, pixmap.height())) # 设置热点为左下角
 
-        drag.exec_(supportedActions)
+        # 强制允许 Copy 和 Move，让目标来决定具体操作
+        # 这是解决拖拽无法发起的关键
+        drag.exec_(Qt.CopyAction | Qt.MoveAction)
+
+    def mimeData(self, indexes):
+        from PyQt5.QtCore import QMimeData
+        mime_data = super().mimeData(indexes)
+        item_ids = []
+        unique_rows = {index.row() for index in indexes}
+        for row in unique_rows:
+            id_item = self.item(row, 8)
+            if id_item:
+                item_ids.append(id_item.text())
+
+        if item_ids:
+            encoded_data = ",".join(item_ids).encode()
+            mime_data.setData("application/x-clipboard-item-ids", encoded_data)
+        return mime_data
 
     def _create_drag_pixmap(self, selected_rows):
         """根据选中的行创建拖拽预览图"""

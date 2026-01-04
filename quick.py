@@ -164,6 +164,74 @@ QPushButton#PinButton:hover { background-color: #444; }
 QPushButton#PinButton:checked { background-color: #0078D4; color: white; border: 1px solid #005A9E; }
 """
 
+class DraggableListWidget(QListWidget):
+    def startDrag(self, supportedActions):
+        from PyQt5.QtWidgets import QDrag
+
+        drag = QDrag(self)
+        mime_data = self.mimeData(self.selectedItems())
+        drag.setMimeData(mime_data)
+
+        # 强制允许 Copy 和 Move，让目标来决定
+        drag.exec_(Qt.CopyAction | Qt.MoveAction)
+
+    def mimeData(self, items):
+        mime_data = super().mimeData(items)
+        if not items:
+            return mime_data
+
+        item_ids = []
+        for item in items:
+            db_item = item.data(Qt.UserRole)
+            if db_item and hasattr(db_item, 'id'):
+                item_ids.append(str(db_item.id))
+
+        if item_ids:
+            encoded_data = ",".join(item_ids).encode()
+            mime_data.setData("application/x-clipboard-item-ids", encoded_data)
+
+        return mime_data
+
+class DroppableTreeWidget(QTreeWidget):
+    def __init__(self, db_manager, main_window, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.db = db_manager
+        self.main_window = main_window
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-clipboard-item-ids"):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        target_item = self.itemAt(event.pos())
+        if not target_item:
+            event.ignore(); return
+
+        target_data = target_item.data(0, Qt.UserRole)
+        if not target_data:
+            event.ignore(); return
+
+        if event.mimeData().hasFormat("application/x-clipboard-item-ids"):
+            encoded_data = event.mimeData().data("application/x-clipboard-item-ids")
+            item_ids = [int(id_str) for id_str in encoded_data.data().decode().split(',') if id_str]
+            if not item_ids:
+                event.ignore(); return
+
+            target_type = target_data.get('type')
+            if target_type == 'partition':
+                partition_id = target_data.get('id')
+                self.db.move_items_to_partition(item_ids, partition_id)
+                self.main_window._update_list()
+                self.main_window._update_partition_tree()
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        else:
+            super().dropEvent(event)
+
+
 class MainWindow(QWidget):
     RESIZE_MARGIN = 18 
     request_show_main_window = pyqtSignal()
@@ -250,25 +318,24 @@ class MainWindow(QWidget):
         self.show()
         self.activateWindow()
         
-        dialog = NewIdeaDialog(self)
-        
-        # 以模态方式执行对话框
-        if dialog.exec_(): # exec_() for PyQt5
-            idea_text = dialog.get_idea_text()
-            if idea_text:
-                log(f"✅ 对话框被接受，保存新灵感: '{idea_text[:50]}...'")
-                # 使用现有的方法添加 item
-                self.db.add_item(idea_text, item_type='text')
-                # 刷新列表以显示新项目
-                self._update_list()
-                
-                # 可选：将新项目滚动到视野中并选中
-                if self.list_widget.count() > 0:
-                    self.list_widget.setCurrentRow(0)
+        self.new_idea_dialog = NewIdeaDialog(self)
+
+        def on_finished():
+            if self.new_idea_dialog.result() == 1: # Accepted
+                idea_text = self.new_idea_dialog.get_idea_text()
+                if idea_text:
+                    log(f"✅ 对话框被接受，保存新灵感: '{idea_text[:50]}...'")
+                    self.db.add_item(idea_text, item_type='text')
+                    self._update_list()
+                    if self.list_widget.count() > 0:
+                        self.list_widget.setCurrentRow(0)
+                else:
+                    log("🟡 对话框被接受，但内容为空，不执行任何操作。")
             else:
-                log("🟡 对话框被接受，但内容为空，不执行任何操作。")
-        else:
-            log("❌ 对话框被取消。")
+                log("❌ 对话框被取消。")
+
+        self.new_idea_dialog.finished.connect(on_finished)
+        self.new_idea_dialog.show()
 
     def _init_ui(self):
         self.setWindowTitle("Clipboard Pro")
@@ -366,20 +433,25 @@ class MainWindow(QWidget):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(4)
         
-        self.list_widget = QListWidget()
+        self.list_widget = DraggableListWidget()
         self.list_widget.setFocusPolicy(Qt.StrongFocus)
         self.list_widget.setAlternatingRowColors(True)
-        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Enable multi-selection
+        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._show_list_context_menu)
+        self.list_widget.setDragEnabled(True)
+        self.list_widget.setDragDropMode(QAbstractItemView.DragOnly)
 
-        self.partition_tree = QTreeWidget()
+
+        self.partition_tree = DroppableTreeWidget(self.db, self)
         self.partition_tree.setHeaderHidden(True)
         self.partition_tree.setFocusPolicy(Qt.NoFocus)
         self.partition_tree.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.partition_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.partition_tree.setAcceptDrops(True)
+        self.partition_tree.setDropIndicatorShown(True)
         
         self.splitter.addWidget(self.list_widget)
         self.splitter.addWidget(self.partition_tree)
@@ -922,9 +994,14 @@ class MainWindow(QWidget):
         ids, _ = self._get_selected_ids_and_items()
         if not ids: return
         
-        dlg = ColorSelectorDialog(self)
-        if dlg.exec_():
-            color = dlg.selected_color or ""
-            for id in ids:
-                self.db.update_item(id, custom_color=color)
-            self._update_list()
+        self.color_selector_dialog = ColorSelectorDialog(self)
+
+        def on_finished():
+            if self.color_selector_dialog.result() == 1: # Accepted
+                color = self.color_selector_dialog.selected_color or ""
+                for id in ids:
+                    self.db.update_item(id, custom_color=color)
+                self._update_list()
+
+        self.color_selector_dialog.finished.connect(on_finished)
+        self.color_selector_dialog.show()
