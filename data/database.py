@@ -220,19 +220,9 @@ class DBManager:
                 partition_id=partition_id, data_blob=data_blob, thumbnail_blob=thumbnail_blob
             )
             session.add(new_item)
-            try:
-                session.commit()
-                session.refresh(new_item)
-                return new_item, True
-            except Exception:
-                session.rollback()
-                existing = session.query(ClipboardItem).filter_by(content_hash=text_hash).first()
-                if existing:
-                    existing.last_visited_at = datetime.now()
-                    existing.visit_count += 1
-                    session.commit()
-                    return existing, False
-                return None, False
+            session.commit()
+            session.refresh(new_item)
+            return new_item, True
         except Exception as e:
             log.error(f"写入失败: {e}")
             session.rollback()
