@@ -401,8 +401,9 @@ class MainWindow(QWidget):
         log("💾 [QuickPanel] 正在恢复窗口状态...")
         geometry = self.settings.value("geometry")
         if geometry:
-            log(f"  - 恢复几何信息: {geometry.x()},{geometry.y()} @ {geometry.width()}x{geometry.height()}")
             self.restoreGeometry(geometry)
+            restored_geo = self.geometry()
+            log(f"  - 恢复几何信息: {restored_geo.x()},{restored_geo.y()} @ {restored_geo.width()}x{restored_geo.height()}")
         else:
             log("  - 未找到几何信息, 居中显示。")
             screen_geo = QApplication.desktop().screenGeometry()
