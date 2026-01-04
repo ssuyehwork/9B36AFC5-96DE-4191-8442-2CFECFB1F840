@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+import os
 from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction, QApplication, QStyle
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import pyqtSignal
@@ -11,8 +11,14 @@ class TrayManager(QSystemTrayIcon):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 使用 Qt 内置的标准图标，'File' 图标比 'Computer' 更能代表内容管理
-        app_icon = QApplication.style().standardIcon(QStyle.SP_FileIcon)
+        # Load the custom SVG icon
+        logo_path = os.path.join("assets", "logo.svg")
+        if os.path.exists(logo_path):
+            app_icon = QIcon(logo_path)
+        else:
+            # Fallback to a standard icon if the SVG is not found
+            app_icon = QApplication.style().standardIcon(QStyle.SP_ApplicationIcon)
+            
         self.setIcon(app_icon)
         
         self.setToolTip("Clipboard Pro")

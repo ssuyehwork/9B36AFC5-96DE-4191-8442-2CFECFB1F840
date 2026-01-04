@@ -8,7 +8,8 @@ import datetime
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QListWidget, QLineEdit,
                              QListWidgetItem, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-                             QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel)
+                             QPushButton, QStyle, QAction, QSplitter, QGraphicsDropShadowEffect, QLabel,
+                             QAbstractItemView, QMenu)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QSettings, QUrl, QMimeData
 from PyQt5.QtGui import QImage, QColor, QCursor
 
@@ -166,6 +167,7 @@ class MainWindow(QWidget):
         self._processing_clipboard = False
         
         self._init_ui()
+        self._setup_shortcuts()  # Bind shortcuts
         self._restore_window_state()
         
         self.setMouseTracking(True)
@@ -334,8 +336,11 @@ class MainWindow(QWidget):
         self.list_widget = QListWidget()
         self.list_widget.setFocusPolicy(Qt.StrongFocus)
         self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Enable multi-selection
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._show_list_context_menu)
 
         self.partition_tree = QTreeWidget()
         self.partition_tree.setHeaderHidden(True)
@@ -676,6 +681,126 @@ class MainWindow(QWidget):
                 self.list_widget.setFocus()
                 QApplication.sendEvent(self.list_widget, event)
         else: super().keyPressEvent(event)
+
+    def _show_list_context_menu(self, pos):
+        """Build and show the enhanced context menu."""
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        menu = QMenu(self)
+        
+        # Single-item actions
+        if len(selected_items) == 1:
+            item_data = selected_items[0].data(Qt.UserRole)
+            menu.addAction("👁️ 预览 (Space)", self._do_preview)
+            menu.addAction("📋 复制内容", lambda: self._copy_item_content(item_data))
+            menu.addSeparator()
+
+        # Batch actions
+        menu.addAction("⭐ 收藏选中项", self._do_batch_toggle_favorite)
+        menu.addAction("📌 置顶选中项", self._do_batch_toggle_pin)
+        menu.addAction("🔒 锁定/解锁选中项", self._do_batch_toggle_lock)
+        
+        # Move to partition submenu
+        move_menu = menu.addMenu("📂 移动到...")
+        partitions = self.db.get_partitions_tree()
+        self._add_partitions_to_menu(partitions, move_menu)
+        
+        menu.addSeparator()
+        menu.addAction("🗑️ 删除选中项 (Del)", self._do_batch_delete)
+
+        menu.exec_(self.list_widget.mapToGlobal(pos))
+
+    def _add_partitions_to_menu(self, partitions, parent_menu):
+        """Recursively add partitions to the move menu."""
+        for p in partitions:
+            action = parent_menu.addAction(p.name)
+            action.triggered.connect(lambda _, pid=p.id: self._move_selection_to_partition(pid))
+            if p.children:
+                child_menu = QMenu(p.name, self)
+                parent_menu.addMenu(child_menu)
+                self._add_partitions_to_menu(p.children, child_menu)
+
+    def _move_selection_to_partition(self, partition_id):
+        """Move selected items to a specific partition."""
+        ids = self._get_selected_ids()
+        if not ids: return
+        deletable_ids = [id for id in ids if not self.db.get_idea(id).is_locked]
+        if not deletable_ids: return
+        for id in deletable_ids:
+            self.db.move_category(id, partition_id)
+        self._update_list()
+        self._update_partition_tree()
+
+    def _do_preview(self):
+        """Preview the currently selected item."""
+        if len(self.list_widget.selectedItems()) == 1:
+            # Assuming a preview service exists, similar to main_window
+            pass
+
+    def _copy_item_content(self, item_data):
+        """Copy content of a single item to clipboard."""
+        if not item_data: return
+        content_to_copy = getattr(item_data, 'content', "")
+        QApplication.clipboard().setText(content_to_copy)
+
+
+    # --- Batch Operation Methods ---
+    def _get_selected_ids(self):
+        """Helper to get all selected item IDs."""
+        selected_items = self.list_widget.selectedItems()
+        return [item.data(Qt.UserRole).id for item in selected_items if item.data(Qt.UserRole)]
+
+    def _do_batch_toggle_favorite(self):
+        """Batch toggle favorite status for selected items."""
+        ids = self._get_selected_ids()
+        if not ids: return
+        # A simple toggle: if any are not favorite, make all favorite. Otherwise, unfavorite all.
+        is_favorite = any(not self.db.get_idea(id).is_favorite for id in ids)
+        for id in ids:
+            self.db.set_favorite(id, is_favorite)
+        self._update_list()
+
+    def _do_batch_toggle_pin(self):
+        """Batch toggle pin status for selected items."""
+        ids = self._get_selected_ids()
+        if not ids: return
+        is_pinned = any(not self.db.get_idea(id).is_pinned for id in ids)
+        for id in ids:
+            self.db.toggle_field(id, 'is_pinned') # Assuming toggle_field handles this
+        self._update_list()
+
+    def _do_batch_toggle_lock(self):
+        """Batch toggle lock status for selected items."""
+        ids = self._get_selected_ids()
+        if not ids: return
+        # If any are unlocked, lock all. Otherwise, unlock all.
+        is_locked = any(not self.db.get_idea(id).is_locked for id in ids)
+        for id in ids:
+            self.db.set_locked([id], is_locked)
+        self._update_list()
+
+    def _do_batch_delete(self):
+        """Batch move selected items to trash."""
+        ids = self._get_selected_ids()
+        if not ids: return
+        # Filter out locked items
+        deletable_ids = [id for id in ids if not self.db.get_idea(id).is_locked]
+        if not deletable_ids: return
+        for id in deletable_ids:
+            self.db.set_deleted(id, True)
+        self._update_list()
+        self._update_partition_tree()
+
+    def _setup_shortcuts(self):
+        """Setup global shortcuts for the window."""
+        QShortcut(QKeySequence("Ctrl+E"), self, self._do_batch_toggle_favorite)
+        QShortcut(QKeySequence("Ctrl+S"), self, self._do_batch_toggle_lock)
+        QShortcut(QKeySequence("Del"), self, self._do_batch_delete)
+        QShortcut(QKeySequence("Ctrl+A"), self, self.list_widget.selectAll)
+        # Assuming a preview function exists or will be added
+        # QShortcut(QKeySequence(Qt.Key_Space), self, self._do_preview)
 
     def _add_debug_test_item(self):
         """仅在数据库为空时，用于填充一些示例数据"""
