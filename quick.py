@@ -91,6 +91,7 @@ QWidget {
 
 /* 标题栏文字样式 */
 QLabel#TitleLabel {
+    background-color: transparent;
     color: #AAAAAA;
     font-weight: bold;
     font-size: 13px;
