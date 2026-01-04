@@ -371,6 +371,7 @@ class QuickWindow(QWidget):
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setIconSize(QSize(120, 90))
+        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection) # 恢复多选
 
         self.partition_tree = DropTreeWidget()
         self.partition_tree.setHeaderHidden(True)
@@ -411,22 +412,23 @@ class QuickWindow(QWidget):
         self.space_shortcut.activated.connect(self._do_preview)
 
     def _do_preview(self):
-        iid = self._get_selected_id()
-        if iid:
-            self.preview_service.toggle_preview({iid})
+        # 预览功能通常只针对单个项目，所以我们只使用第一个选中的ID
+        ids = self._get_selected_ids()
+        if ids:
+            self.preview_service.toggle_preview({ids[0]})
 
     # --- 右键菜单逻辑 ---
     def _show_list_context_menu(self, pos):
-        item = self.list_widget.itemAt(pos)
-        if not item: return
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
 
-        data = item.data(Qt.UserRole)
+        count = len(selected_items)
+        data = selected_items[0].data(Qt.UserRole) # 以第一个项目作为状态参考
         if not data: return
 
-        idea_id = data[0]
         is_pinned = data[4]
         is_fav = data[5]
-        # 获取锁定状态
         is_locked = data[13] if len(data) > 13 else 0
 
         menu = QMenu(self)
@@ -437,38 +439,48 @@ class QuickWindow(QWidget):
             QMenu::separator { background-color: #444; height: 1px; margin: 4px 0px; }
         """)
 
-        action_preview = menu.addAction("👁️ 预览 (Space)")
-        action_preview.triggered.connect(self._do_preview)
-
-        menu.addSeparator()
-
-        action_copy = menu.addAction("📋 复制内容")
-        action_copy.triggered.connect(lambda: self._copy_item_content(data))
-
-        menu.addSeparator()
-
-        # 锁定选项
-        if is_locked:
-            menu.addAction("🔓 解锁", self._do_lock_selected)
-        else:
-            menu.addAction("🔒 锁定 (Ctrl+S)", self._do_lock_selected)
-
-        action_pin = menu.addAction("📌 取消置顶" if is_pinned else "📌 置顶")
-        action_pin.triggered.connect(self._do_toggle_pin)
-
-        action_fav = menu.addAction("⭐ 取消收藏" if is_fav else "⭐ 收藏")
-        action_fav.triggered.connect(self._do_toggle_favorite)
-
-        if not is_locked:
-            action_edit = menu.addAction("✏️ 编辑")
-            action_edit.triggered.connect(self._do_edit_selected)
+        # --- 批量操作 ---
+        if count > 1:
+            menu.addAction(f"🔒 批量锁定/解锁 ({count})", self._do_lock_selected)
+            menu.addAction(f"📌 批量置顶/取消 ({count})", self._do_toggle_pin)
+            menu.addAction(f"⭐ 批量收藏/取消 ({count})", self._do_toggle_favorite)
             menu.addSeparator()
-            action_del = menu.addAction("🗑️ 删除")
-            action_del.triggered.connect(self._do_delete_selected)
-        else:
+            menu.addAction(f"🗑️ 批量删除 ({count})", self._do_delete_selected)
             menu.addSeparator()
-            del_action = menu.addAction("🗑️ 删除 (已锁定)")
-            del_action.setEnabled(False)
+            action_edit = menu.addAction("✏️ 编辑 (多选不可用)")
+            action_edit.setEnabled(False)
+            action_preview = menu.addAction("👁️ 预览 (多选不可用)")
+            action_preview.setEnabled(False)
+        # --- 单个操作 ---
+        else:
+            action_preview = menu.addAction("👁️ 预览 (Space)")
+            action_preview.triggered.connect(self._do_preview)
+            menu.addSeparator()
+            action_copy = menu.addAction("📋 复制内容")
+            action_copy.triggered.connect(lambda: self._copy_item_content(data))
+            menu.addSeparator()
+
+            if is_locked:
+                menu.addAction("🔓 解锁", self._do_lock_selected)
+            else:
+                menu.addAction("🔒 锁定 (Ctrl+S)", self._do_lock_selected)
+
+            action_pin = menu.addAction("📌 取消置顶" if is_pinned else "📌 置顶")
+            action_pin.triggered.connect(self._do_toggle_pin)
+
+            action_fav = menu.addAction("⭐ 取消收藏" if is_fav else "⭐ 收藏")
+            action_fav.triggered.connect(self._do_toggle_favorite)
+
+            if not is_locked:
+                action_edit = menu.addAction("✏️ 编辑")
+                action_edit.triggered.connect(self._do_edit_selected)
+                menu.addSeparator()
+                action_del = menu.addAction("🗑️ 删除")
+                action_del.triggered.connect(self._do_delete_selected)
+            else:
+                menu.addSeparator()
+                del_action = menu.addAction("🗑️ 删除 (已锁定)")
+                del_action.setEnabled(False)
 
         menu.exec_(self.list_widget.mapToGlobal(pos))
 
@@ -481,29 +493,38 @@ class QuickWindow(QWidget):
 
     # --- 逻辑处理 ---
 
-    def _get_selected_id(self):
-        item = self.list_widget.currentItem()
-        if not item: return None
-        data = item.data(Qt.UserRole)
-        if data: return data[0]
-        return None
+    def _get_selected_ids(self):
+        """获取所有选定项的ID列表"""
+        ids = []
+        selected_items = self.list_widget.selectedItems()
+        # 如果没有显式选择，则回退到当前活动项
+        if not selected_items and self.list_widget.currentItem():
+            selected_items = [self.list_widget.currentItem()]
+
+        for item in selected_items:
+            data = item.data(Qt.UserRole)
+            if data:
+                ids.append(data[0])
+        return ids
 
     # 锁定逻辑
     def _do_lock_selected(self):
-        iid = self._get_selected_id()
-        if not iid: return
+        ids = self._get_selected_ids()
+        if not ids: return
 
-        status = self.db.get_lock_status([iid])
-        current_state = status.get(iid, 0)
-
+        # 批量操作时，以第一个项目为准决定是锁定还是解锁
+        status = self.db.get_lock_status(ids)
+        current_state = status.get(ids[0], 0)
         new_state = 0 if current_state else 1
-        self.db.set_locked([iid], new_state)
 
+        self.db.set_locked(ids, new_state)
         self._update_list()
 
     def _do_edit_selected(self):
-        iid = self._get_selected_id()
-        if iid:
+        ids = self._get_selected_ids()
+        # 编辑操作只应针对单个项目
+        if ids and len(ids) == 1:
+            iid = ids[0]
             # 检查锁定
             status = self.db.get_lock_status([iid])
             if status.get(iid, 0):
@@ -527,27 +548,37 @@ class QuickWindow(QWidget):
             dialog.activateWindow()
 
     def _do_delete_selected(self):
-        iid = self._get_selected_id()
-        if iid:
-            status = self.db.get_lock_status([iid])
-            if status.get(iid, 0):
-                return
-                
-            self.db.set_deleted(iid, True)
+        ids = self._get_selected_ids()
+        if not ids: return
+
+        status = self.db.get_lock_status(ids)
+        # 过滤掉已锁定的项目
+        unlocked_ids = [i for i in ids if not status.get(i, 0)]
+
+        if not unlocked_ids:
+             QMessageBox.information(self, "操作失败", "选中的项目均已锁定，无法删除。")
+             return
+
+        # 弹出确认对话框
+        reply = QMessageBox.question(self, '确认删除', f'确定要删除选中的 {len(unlocked_ids)} 个项目吗？',
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            self.db.move_items_to_trash(unlocked_ids)
             self._update_list()
             self._update_partition_tree()
 
     def _do_toggle_favorite(self):
-        iid = self._get_selected_id()
-        if iid:
-            self.db.toggle_field(iid, 'is_favorite')
-            self._update_list()
+        ids = self._get_selected_ids()
+        if not ids: return
+        self.db.toggle_field_batch(ids, 'is_favorite')
+        self._update_list()
 
     def _do_toggle_pin(self):
-        iid = self._get_selected_id()
-        if iid:
-            self.db.toggle_field(iid, 'is_pinned')
-            self._update_list()
+        ids = self._get_selected_ids()
+        if not ids: return
+        self.db.toggle_field_batch(ids, 'is_pinned')
+        self._update_list()
 
     def _handle_category_drop(self, idea_id, cat_id):
         status = self.db.get_lock_status([idea_id])

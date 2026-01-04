@@ -305,6 +305,28 @@ class DBManager:
         finally:
             session.close()
 
+    def toggle_field_batch(self, item_ids, field_name):
+        if not item_ids:
+            return
+
+        session = self.get_session()
+        try:
+            items = session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).all()
+            if not items:
+                return
+
+            base_item = items[0]
+            current_value = getattr(base_item, field_name)
+            new_value = not current_value
+
+            session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids)).update({field_name: new_value}, synchronize_session=False)
+            session.commit()
+        except Exception as e:
+            log.error(f"批量切换字段 {field_name} 失败: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
     def move_items_to_trash(self, ids):
         session = self.get_session()
         try:

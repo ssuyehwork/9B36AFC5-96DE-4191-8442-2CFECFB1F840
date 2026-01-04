@@ -30,7 +30,7 @@ class AppController(QObject):
         self.app = app
         
         from data.database import DBManager
-        from quick import MainWindow as QuickPanelWindow
+        from quick import QuickWindow as QuickPanelWindow
         from ui.ball import FloatingBall
         from ui.tray_manager import TrayManager
         from ui.action_popup import ActionPopup
