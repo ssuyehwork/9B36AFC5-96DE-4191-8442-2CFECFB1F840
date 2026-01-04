@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self.table.reorder_signal.connect(self.reorder_items)
         self.dock_container.setCentralWidget(self.table)
         
+        # Hide the detail panel by default as requested
+        self.dock_detail.hide()
+
         self.filter_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.partition_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tag_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -499,8 +502,8 @@ class MainWindow(QMainWindow):
         if hasattr(self.title_bar, 'btn_pin'):
             self.title_bar.btn_pin.setChecked(self.is_pinned)
 
+        # Allow restoreState to handle visibility; do not force show all docks.
         for dock in [self.dock_filter, self.dock_partition, self.dock_tags, self.dock_detail]:
-            dock.setVisible(True)
             dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         
         self.edit_mode = s.value("editMode", False, type=bool)
