@@ -53,6 +53,17 @@ class FloatingBall(QWidget):
         self.timer.timeout.connect(self._update_physics)
         self.timer.start(16) 
 
+        self._restore_position()
+
+    def _restore_position(self):
+        """恢复悬浮球上次的位置"""
+        pos_data = load_setting('floating_ball_pos', None)
+        if isinstance(pos_data, dict):
+            try:
+                self.move(pos_data['x'], pos_data['y'])
+            except Exception:
+                pass # 位置数据异常则使用默认位置
+
     def trigger_clipboard_feedback(self):
         """触发记录成功特效"""
         self.is_writing = True

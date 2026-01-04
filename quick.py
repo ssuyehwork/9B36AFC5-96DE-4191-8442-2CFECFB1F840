@@ -398,24 +398,33 @@ class MainWindow(QWidget):
 
     # --- Restore & Save State ---
     def _restore_window_state(self):
+        log("💾 [QuickPanel] 正在恢复窗口状态...")
         geometry = self.settings.value("geometry")
         if geometry:
+            log(f"  - 恢复几何信息: {geometry.x()},{geometry.y()} @ {geometry.width()}x{geometry.height()}")
             self.restoreGeometry(geometry)
         else:
+            log("  - 未找到几何信息, 居中显示。")
             screen_geo = QApplication.desktop().screenGeometry()
             win_geo = self.geometry()
             x = (screen_geo.width() - win_geo.width()) // 2
             y = (screen_geo.height() - win_geo.height()) // 2
             self.move(x, y)
+
         splitter_state = self.settings.value("splitter_state")
-        if splitter_state: self.splitter.restoreState(splitter_state)
+        if splitter_state:
+            log("  - 恢复分割器状态。")
+            self.splitter.restoreState(splitter_state)
 
         is_pinned = self.settings.value("pinned", False, type=bool)
+        log(f"  - 恢复置顶状态: {is_pinned}")
         if is_pinned:
             self.btn_stay_top.setChecked(True)
             self._toggle_stay_on_top()
+        log("✅ [QuickPanel] 状态恢复完毕。")
 
     def closeEvent(self, event):
+        log(f"💾 [QuickPanel] 正在保存窗口状态... (置顶: {self._is_pinned})")
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("splitter_state", self.splitter.saveState())
         self.settings.setValue("pinned", self._is_pinned)
