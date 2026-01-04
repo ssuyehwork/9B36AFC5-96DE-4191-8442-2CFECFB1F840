@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+import logging
 import ctypes
 import os
 from ctypes.wintypes import MSG
@@ -17,6 +18,7 @@ from sqlalchemy.orm import joinedload
 from data.database import DBManager, Partition
 from services.clipboard import ClipboardManager
 from core.shared import format_size, get_color_icon
+from core.datetime_utils import get_date_label
 
 # UI 组件
 from ui.components import CustomTitleBar
@@ -85,9 +87,14 @@ class MainWindow(QMainWindow):
         self.page = 1
         self.page_size = 100
         self.total_items = 0
-        self._processing_clipboard = False
         self.item_id_to_select_after_load = None
         
+        # 剪贴板队列 + 防抖
+        self._clipboard_queue = deque(maxlen=10)
+        self._clipboard_timer = QTimer(self)
+        self._clipboard_timer.setSingleShot(True)
+        self._clipboard_timer.timeout.connect(self._process_clipboard_queue)
+
         self.cached_items = []
         self.cached_items_map = {}
         
@@ -552,14 +559,32 @@ class MainWindow(QMainWindow):
         e.accept()
 
     def on_clipboard_event(self):
-        if self._processing_clipboard:
+        """
+        剪贴板数据变化事件处理（防抖）。
+        将事件数据加入队列并启动一个短定时器。
+        """
+        mime_data = self.clipboard.mimeData()
+        self._clipboard_queue.append(mime_data)
+        # 200ms 内的连续事件将被合并处理
+        self._clipboard_timer.start(200)
+
+    def _process_clipboard_queue(self):
+        """
+        定时器超时后处理剪贴板队列。
+        只处理队列中最新的数据项。
+        """
+        if not self._clipboard_queue:
             return
         
-        self._processing_clipboard = True
+        # 只处理最新的数据，并清空队列以忽略中间事件
+        latest_mime_data = self._clipboard_queue[-1]
+        self._clipboard_queue.clear()
+
         try:
-            self.cm.process_clipboard(self.clipboard.mimeData(), self.partition_panel.get_current_selection())
-        finally:
-            self._processing_clipboard = False
+            log.info("⏳ 处理防抖后的剪贴板事件...")
+            self.cm.process_clipboard(latest_mime_data, self.partition_panel.get_current_selection())
+        except Exception as e:
+            log.error(f"处理剪贴板队列失败: {e}", exc_info=True)
 
     def refresh_after_capture(self):
         QTimer.singleShot(0, self.load_data)
@@ -631,16 +656,23 @@ class MainWindow(QMainWindow):
                 self.btn_next.setEnabled(False)
                 self.btn_last.setEnabled(False)
 
-            items = self.db.get_items(sort_mode=self.current_sort_mode, limit=limit, offset=offset, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter)
+            items = self.db.get_items_detached(sort_mode=self.current_sort_mode, limit=limit, offset=offset, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter)
+
+            # 清理旧缓存以防内存泄漏
+            self.cached_items.clear()
+            self.cached_items_map.clear()
             
             self.cached_items = items
             self.cached_items_map = {item.id: item for item in items}
             log.info(f"✅ 从数据库加载 {len(items)} 条数据并缓存")
             
+            self.table.setUpdatesEnabled(False)
             self.table.blockSignals(True)
-            self.table.setRowCount(len(items))
-            for row, item in enumerate(items):
-                self.table.setItem(row, 8, QTableWidgetItem(str(item.id)))
+
+            try:
+                self.table.setRowCount(len(items))
+                for row, item in enumerate(items):
+                    self.table.setItem(row, 8, QTableWidgetItem(str(item.id)))
                 
                 st_flags = ("📌" if item.is_pinned else "") + ("❤️" if item.is_favorite else "") + ("🔒" if item.is_locked else "")
                 display_text = f"{self._get_type_icon(item)} {st_flags}".strip()
@@ -669,7 +701,9 @@ class MainWindow(QMainWindow):
                     table_item = self.table.item(row, col)
                     if table_item:
                         table_item.setTextAlignment(align)
-            self.table.blockSignals(False)
+            finally:
+                self.table.blockSignals(False)
+                self.table.setUpdatesEnabled(True)
             
             self._apply_frontend_filters()
             self.tag_panel.refresh_tags(self.db)
@@ -761,39 +795,25 @@ class MainWindow(QMainWindow):
         return 'text'
 
     def _calculate_stats_from_items(self, items):
-        from data.database import Tag
-        stats = {'tags': {}, 'stars': {}, 'colors': {}, 'types': {}, 'date_create': {}, 'date_modify': {}}
-        session = self.db.get_session()
-        try:
-            all_tags_in_db = {tag.name for tag in session.query(Tag).all()}
-            for item in items:
-                stats['stars'][item.star_level] = stats['stars'].get(item.star_level, 0) + 1
-                if item.custom_color:
-                    stats['colors'][item.custom_color] = stats['colors'].get(item.custom_color, 0) + 1
-                for tag in item.tags:
-                    stats['tags'][tag.name] = stats['tags'].get(tag.name, 0) + 1
-                stats['types'][self._get_item_type_key(item)] = stats['types'].get(self._get_item_type_key(item), 0) + 1
-        finally:
-            session.close()
+        """基于给定的 item 列表计算前端筛选器所需的统计信息"""
+        if not items:
+            return {'tags': [], 'stars': {}, 'colors': {}, 'types': {}, 'date_create': {}, 'date_modify': {}}
+
+        item_ids = [item.id for item in items]
         
-        final_tags = {tag_name: 0 for tag_name in all_tags_in_db}
-        final_tags.update(stats['tags'])
-        stats['tags'] = list(final_tags.items())
+        # 从数据库高效获取核心统计数据
+        stats = self.db.get_stats_for_items(item_ids)
         
-        def get_date_label(dt):
-            today = datetime.now().date()
-            if dt.date() == today: return "今日"
-            if dt.date() == today - timedelta(days=1): return "昨日"
-            if dt.date() >= today - timedelta(days=7): return "周内"
-            if dt.date() >= today - timedelta(days=14): return "两周"
-            if dt.month == today.month and dt.year == today.year: return "本月"
-            first_day_curr = today.replace(day=1)
-            last_day_last = first_day_curr - timedelta(days=1)
-            first_day_last = last_day_last.replace(day=1)
-            if first_day_last <= dt.date() <= last_day_last: return "上月"
-            return None
+        # 在客户端计算剩余的、逻辑较复杂的统计数据
+        stats['types'] = {}
+        stats['date_create'] = {}
+        stats['date_modify'] = {}
 
         for item in items:
+            # 类型统计
+            stats['types'][self._get_item_type_key(item)] = stats['types'].get(self._get_item_type_key(item), 0) + 1
+
+            # 日期统计
             label = get_date_label(item.created_at)
             if label:
                 stats['date_create'][label] = stats['date_create'].get(label, 0) + 1
@@ -801,6 +821,10 @@ class MainWindow(QMainWindow):
                 label = get_date_label(item.modified_at)
                 if label:
                     stats['date_modify'][label] = stats['date_modify'].get(label, 0) + 1
+
+        # 确保标签格式正确
+        stats['tags'] = list(stats['tags'].items())
+
         return stats
 
     def show_header_menu(self, pos):

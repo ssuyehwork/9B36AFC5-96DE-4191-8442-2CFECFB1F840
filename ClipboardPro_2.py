@@ -41,6 +41,7 @@ class AppController(QObject):
         self.ball = FloatingBall(main_window=self.quick_panel)
         self.tray = TrayManager()
         self.action_popup = ActionPopup()
+        self.main_window_instance = None # 持有主窗口实例
         
         self._connect_signals()
         
@@ -56,14 +57,17 @@ class AppController(QObject):
         # Connect ActionPopup signals
         self.action_popup.request_favorite.connect(lambda item_id: self.db_manager.update_item(item_id, is_favorite=True))
         self.action_popup.request_tag_add.connect(self.db_manager.add_tags_to_items)
-        self.action_popup.request_manager.connect(self.quick_panel._launch_main_app)
+        self.action_popup.request_manager.connect(self._show_main_window)
 
         self.ball.request_show_quick_window.connect(self.toggle_quick_panel)
         self.ball.double_clicked.connect(self.toggle_quick_panel)
-        self.ball.request_show_main_window.connect(self.quick_panel._launch_main_app)
+        self.ball.request_show_main_window.connect(self._show_main_window)
         self.ball.request_show_tag_manager.connect(self._show_common_tags_manager)
         self.ball.request_quit_app.connect(self.app.quit)
         
+        # 连接快速面板的信号
+        self.quick_panel.request_show_main_window.connect(self._show_main_window)
+
         self.tray.request_show_quick_panel.connect(self.toggle_quick_panel)
         self.tray.request_quit.connect(self.app.quit)
         
@@ -91,6 +95,32 @@ class AppController(QObject):
         # 实例化并以模态方式执行对话框
         dialog = CommonTagsManager(self.quick_panel)
         dialog.exec_()
+
+    def _show_main_window(self):
+        """创建并显示主数据管理窗口"""
+        try:
+            if self.main_window_instance and self.main_window_instance.isVisible():
+                self.main_window_instance.activateWindow()
+                self.main_window_instance.raise_()
+                log.info("主窗口已存在，激活并置顶。")
+            else:
+                log.info("主窗口不存在或已关闭，正在创建新实例...")
+                from ui.main_window import MainWindow
+
+                self.main_window_instance = MainWindow()
+                self.main_window_instance.show()
+
+                # 居中显示
+                screen_geo = QApplication.desktop().screenGeometry()
+                window_geo = self.main_window_instance.geometry()
+                self.main_window_instance.move(
+                    (screen_geo.width() - window_geo.width()) // 2,
+                    (screen_geo.height() - window_geo.height()) // 2
+                )
+                log.info("✅ 主窗口创建并显示成功。")
+
+        except Exception as e:
+            log.error(f"❌ 启动主窗口失败: {e}", exc_info=True)
 
 def main():
     log.info("🚀 启动印象记忆_Pro...")

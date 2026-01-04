@@ -42,8 +42,11 @@ class ImageHandler(BaseHandler):
             byte_array = QByteArray()
             buffer = QBuffer(byte_array)
             buffer.open(QIODevice.WriteOnly)
-            qimage.save(buffer, "PNG")
-            image_blob = byte_array.data()
+            try:
+                qimage.save(buffer, "PNG")
+                image_blob = byte_array.data()
+            finally:
+                buffer.close()
 
             # 计算哈希用于去重
             img_hash = hashlib.md5(image_blob).hexdigest()
@@ -84,8 +87,11 @@ class ImageHandler(BaseHandler):
             byte_array = QByteArray()
             buffer = QBuffer(byte_array)
             buffer.open(QIODevice.WriteOnly)
-            thumbnail.save(buffer, "PNG")
-            return byte_array.data()
+            try:
+                thumbnail.save(buffer, "PNG")
+                return byte_array.data()
+            finally:
+                buffer.close()
         except Exception as e:
             log.error(f"创建缩略图失败: {e}")
             return None

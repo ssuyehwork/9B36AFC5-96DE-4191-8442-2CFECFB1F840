@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys
 import os
+import shutil
 import hashlib
 import logging
 from datetime import datetime, timedelta, time
@@ -118,7 +119,21 @@ class DBManager:
                     raise
 
                 if inspector.has_table("partition_groups"):
-                    log.info("检测到旧的 partition_groups 表，开始数据迁移...")
+                    log.info("检测到需要数据迁移的旧表结构 (partition_groups)。")
+
+                    # --- 数据库备份 ---
+                    db_path = self.engine.url.database
+                    backup_path = f"{db_path}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    try:
+                        log.info(f"正在备份当前数据库到: {backup_path}")
+                        shutil.copy2(db_path, backup_path)
+                        log.info("✅ 数据库备份成功。")
+                    except Exception as backup_exc:
+                        log.critical(f"❌ 数据库备份失败: {backup_exc}", exc_info=True)
+                        log.critical("为防止数据丢失，迁移操作已中止。请手动备份数据库文件后再试。")
+                        raise  # 阻止迁移继续进行
+
+                    log.info("开始数据迁移...")
                     migration_transaction = connection.begin()
                     try:
                         groups = connection.execute(text("SELECT id, name, color, sort_index FROM partition_groups ORDER BY id")).fetchall()
@@ -166,7 +181,25 @@ class DBManager:
     def add_item(self, text, is_file=False, file_path=None, item_type='text', image_path=None, partition_id=None, data_blob=None, thumbnail_blob=None):
         session = self.get_session()
         try:
-            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            # --- 输入验证 ---
+            if text is None:
+                log.warning("尝试添加内容为 None 的项目，已跳过。")
+                return None, False
+
+            # --- 大小限制 ---
+            MAX_TEXT_SIZE = 10 * 1024 * 1024  # 10MB
+            try:
+                text_bytes = text.encode('utf-8')
+                if len(text_bytes) > MAX_TEXT_SIZE:
+                    log.warning(f"内容过大 ({len(text_bytes)} bytes)，将被截断为 {MAX_TEXT_SIZE} bytes。")
+                    # 截断时需要注意不要破坏多字节字符
+                    text = text[:MAX_TEXT_SIZE // 4]
+                    text_bytes = text.encode('utf-8', 'ignore')
+            except Exception as enc_e:
+                log.error(f"文本编码失败: {enc_e}, text: {str(text)[:100]}")
+                return None, False
+
+            text_hash = hashlib.sha256(text_bytes).hexdigest()
             existing = session.query(ClipboardItem).filter_by(content_hash=text_hash).first()
             if existing:
                 existing.last_visited_at = datetime.now()
@@ -209,7 +242,10 @@ class DBManager:
 
     def _build_query(self, session, sort_mode="manual", date_filter=None, date_modify_filter=None, partition_filter=None, include_deleted=False):
         log.debug(f"🔍 构建查询: sort={sort_mode}, date={date_filter}, date_modify={date_modify_filter}, partition={partition_filter}, deleted={include_deleted}")
-        q = session.query(ClipboardItem).options(joinedload(ClipboardItem.tags))
+        q = session.query(ClipboardItem).options(
+            joinedload(ClipboardItem.tags),
+            joinedload(ClipboardItem.partition)
+        )
         if include_deleted:
             q = q.filter(ClipboardItem.is_deleted == True)
         else:
@@ -272,6 +308,36 @@ class DBManager:
             return q.all()
         except Exception as e:
             log.error(f"查询失败: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    def get_items_detached(self, sort_mode="manual", limit=50, offset=0, date_filter=None, date_modify_filter=None, partition_filter=None):
+        """
+        获取脱离 session 的对象，使其可以在 UI 线程中安全使用。
+        """
+        session = self.get_session()
+        try:
+            include_deleted = (partition_filter and partition_filter.get('type') == 'trash')
+            q = self._build_query(session, sort_mode=sort_mode, date_filter=date_filter, date_modify_filter=date_modify_filter, partition_filter=partition_filter, include_deleted=include_deleted)
+
+            if limit is not None:
+                q = q.limit(limit)
+            if offset > 0:
+                q = q.offset(offset)
+
+            items = q.all()
+
+            # 急切加载所有关联数据并脱离 session
+            for item in items:
+                # 访问关联属性以确保它们被加载
+                _ = len(item.tags)
+                _ = item.partition
+                session.expunge(item)
+
+            return items
+        except Exception as e:
+            log.error(f"查询 (detached) 失败: {e}", exc_info=True)
             return []
         finally:
             session.close()
@@ -374,6 +440,45 @@ class DBManager:
             return stats
         except Exception as e:
             log.error(f"获取统计失败: {e}", exc_info=True)
+            return stats
+        finally:
+            session.close()
+
+    def get_stats_for_items(self, item_ids):
+        """为给定的 item_ids 列表高效计算统计数据"""
+        stats = {'tags': {}, 'stars': {}, 'colors': {}, 'types': {}}
+        if not item_ids:
+            return stats
+
+        session = self.get_session()
+        try:
+            # 标签统计
+            tag_counts = session.query(Tag.name, func.count(item_tags.c.item_id))\
+                .join(item_tags)\
+                .filter(item_tags.c.item_id.in_(item_ids))\
+                .group_by(Tag.name)\
+                .all()
+            stats['tags'] = dict(tag_counts)
+
+            # 星级、颜色、类型统计
+            base_query = session.query(ClipboardItem).filter(ClipboardItem.id.in_(item_ids))
+
+            star_counts = base_query.with_entities(ClipboardItem.star_level, func.count(ClipboardItem.id))\
+                .group_by(ClipboardItem.star_level)\
+                .all()
+            stats['stars'] = dict(star_counts)
+
+            color_counts = base_query.with_entities(ClipboardItem.custom_color, func.count(ClipboardItem.id))\
+                .filter(ClipboardItem.custom_color.isnot(None))\
+                .group_by(ClipboardItem.custom_color)\
+                .all()
+            stats['colors'] = dict(color_counts)
+
+            # 类型统计需要更复杂一点的逻辑，暂时保持原样，在UI层处理
+
+            return stats
+        except Exception as e:
+            log.error(f"获取指定项目统计失败: {e}", exc_info=True)
             return stats
         finally:
             session.close()
