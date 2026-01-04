@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
 from PyQt5.QtWidgets import QTableWidget, QAbstractItemView, QHeaderView, QTableWidgetItem
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QPoint, QRect
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
 from core.shared import get_color_icon, format_size
 
 class TablePanel(QTableWidget):
@@ -113,6 +114,62 @@ class TablePanel(QTableWidget):
             if self.is_trash_view:
                 mime_data.setData("application/x-clipboard-source", b"trash")
         return mime_data
+
+    def startDrag(self, supportedActions):
+        """
+        重写拖拽操作，自定义预览图和热点
+        """
+        mime_data = self.mimeData(self.selectedIndexes())
+        if not mime_data.hasFormat("application/x-clipboard-item-ids"):
+            return
+
+        # 获取所有选中的独立行
+        selected_rows = sorted(list({index.row() for index in self.selectedIndexes()}))
+        if not selected_rows:
+            return
+
+        # 创建一个基于第一行内容的预览图
+        first_row_rect = self.visualRowRect(selected_rows[0])
+
+        # 抓取整个表格的截图，然后裁剪出需要的行，这样最稳定
+        # 为了保证样式正确，我们稍微扩大一点抓取区域
+        grab_rect = self.viewport().rect()
+        pixmap = QPixmap(grab_rect.size())
+        pixmap.fill(Qt.transparent) # 设置透明背景
+        self.viewport().render(pixmap, QPoint(), QRect(0,0,grab_rect.width(), grab_rect.height()))
+
+        # 裁剪出第一行的图像
+        row_pixmap = pixmap.copy(first_row_rect)
+
+        # 如果选中了多于一行，在预览图上加一个角标
+        if len(selected_rows) > 1:
+            painter = QPainter(row_pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+
+            # 在右上角绘制一个蓝色的角标
+            badge_size = 24
+            badge_rect = QRect(row_pixmap.width() - badge_size - 5, 5, badge_size, badge_size)
+            painter.setBrush(QColor("#4a90e2"))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(badge_rect)
+
+            # 在角标上写上数量
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(9)
+            painter.setFont(font)
+            painter.setPen(Qt.white)
+            painter.drawText(badge_rect, Qt.AlignCenter, str(len(selected_rows)))
+            painter.end()
+
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.setPixmap(row_pixmap)
+
+        # 将热点设置在左下角，这样预览图就会出现在鼠标的右上方
+        drag.setHotSpot(QPoint(0, row_pixmap.height()))
+
+        drag.exec_(supportedActions)
 
     def populate_table(self, items, col_alignments):
         """填充表格数据，这是 MainWindow 调用的核心方法"""
