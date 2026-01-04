@@ -112,6 +112,24 @@ QListWidget::item:selected, QTreeWidget::item:selected {
 }
 QListWidget::item:hover { background-color: #444444; }
 
+QMenu {
+    background-color: #383838;
+    border: 1px solid #555;
+    padding: 5px;
+}
+QMenu::item {
+    padding: 5px 25px;
+    border-radius: 4px;
+}
+QMenu::item:selected {
+    background-color: #4D79C4;
+}
+QMenu::separator {
+    height: 1px;
+    background: #555;
+    margin: 5px 0;
+}
+
 QSplitter::handle { background-color: #444; width: 2px; }
 QSplitter::handle:hover { background-color: #4D79C4; }
 

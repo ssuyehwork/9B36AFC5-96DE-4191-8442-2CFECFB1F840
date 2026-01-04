@@ -8,7 +8,7 @@ import os
 import sys
 import hashlib
 from datetime import datetime
-from PyQt5.QtCore import QMimeData, QBuffer, QByteArray, QIODevice
+from PyQt5.QtCore import Qt, QMimeData, QBuffer, QByteArray, QIODevice
 from PyQt5.QtGui import QImage
 from handlers.base_handler import BaseHandler
 
