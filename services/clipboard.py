@@ -12,7 +12,7 @@ log = logging.getLogger("ClipboardSvc")
 class ClipboardManager(QObject):
     """剪贴板管理器 - 使用策略模式"""
     
-    data_captured = pyqtSignal(bool)
+    data_captured = pyqtSignal(object, bool)
 
     def __init__(self, db_manager):
         super().__init__()
@@ -83,11 +83,12 @@ class ClipboardManager(QObject):
                                 final_tags = list(all_tags)
                                 log.info(f"为新项目 {item.id} 添加预设标签: {final_tags}")
                                 self.db.add_tags_to_items([item.id], final_tags)
-
-                        self.data_captured.emit(True)
+                        
+                        self.data_captured.emit(item, is_new)
                         return True
                     elif not is_new and item:
-                        # 项目已存在
+                        # 项目已存在, 也发射信号，但 is_new 为 False
+                        self.data_captured.emit(item, is_new)
                         return False
             
             # 没有处理器能处理该数据

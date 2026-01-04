@@ -6,13 +6,14 @@ from PyQt5.QtWidgets import QWidget, QMenu
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QRectF
 from PyQt5.QtGui import (QPainter, QColor, QPen, QBrush, 
                          QLinearGradient, QPainterPath, QPolygonF)
-from core.settings import save_setting
+from core.settings import save_setting, load_setting
 
 class FloatingBall(QWidget):
     request_show_quick_window = pyqtSignal()
     request_show_main_window = pyqtSignal()
     request_quit_app = pyqtSignal()
     double_clicked = pyqtSignal()
+    request_show_tag_manager = pyqtSignal()
 
     # --- 皮肤枚举 ---
     SKIN_MOCHA = 0   # 摩卡·勃艮第 (最新款)
@@ -33,7 +34,7 @@ class FloatingBall(QWidget):
         self.is_hovering = False 
         
         # --- 状态与配置 ---
-        self.current_skin = self.SKIN_MOCHA # 默认样式
+        self.current_skin = load_setting('floating_ball_skin', self.SKIN_MOCHA)
         self.is_writing = False 
         self.write_timer = 0     
         self.offset = QPoint()
@@ -60,6 +61,7 @@ class FloatingBall(QWidget):
     def switch_skin(self, skin_id):
         """切换皮肤并刷新"""
         self.current_skin = skin_id
+        save_setting('floating_ball_skin', skin_id)
         self.update()
 
     def _update_physics(self):
@@ -415,6 +417,7 @@ class FloatingBall(QWidget):
         m.addAction('📝  快速笔记', self.request_show_quick_window.emit)
         m.addAction('🗂️  打开主界面', self.request_show_main_window.emit)
         m.addAction('✨  新建灵感', self.mw.new_idea)
+        m.addAction('🏷️  管理常用标签', self.request_show_tag_manager.emit)
         m.addSeparator()
         m.addAction('🚪  退出', self.request_quit_app.emit)
         

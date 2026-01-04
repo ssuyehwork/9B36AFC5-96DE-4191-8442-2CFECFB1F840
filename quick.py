@@ -420,9 +420,15 @@ class MainWindow(QWidget):
         splitter_state = self.settings.value("splitter_state")
         if splitter_state: self.splitter.restoreState(splitter_state)
 
+        is_pinned = self.settings.value("pinned", False, type=bool)
+        if is_pinned:
+            self.btn_stay_top.setChecked(True)
+            self._toggle_stay_on_top()
+
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("splitter_state", self.splitter.saveState())
+        self.settings.setValue("pinned", self._is_pinned)
         super().closeEvent(event)
 
     # --- Mouse Logic ---
